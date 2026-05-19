@@ -10,8 +10,12 @@ import SwiftUI
 
 struct EmptyAccountsView: View {
     let transition: Namespace.ID
-    @State private var showingAddAccount = false
-    @State private var showingTroubleshooting = false
+    /// State + .sheet modifiers live on `MainView` so they survive
+    /// brief scenePhase flips (Password autofill, screenshot capture)
+    /// that tear down this view through the 0xdead10cc guard. The
+    /// view here only owns the buttons that *trigger* the sheets.
+    @Binding var showingAddAccount: Bool
+    @Binding var showingTroubleshooting: Bool
 
     var body: some View {
         VStack(spacing: 20) {
@@ -45,36 +49,6 @@ struct EmptyAccountsView: View {
             .foregroundStyle(.blue)
         }
         .padding()
-        .sheet(isPresented: $showingAddAccount) {
-            NavigationView {
-                AddAccountView()
-                    .toolbar {
-                        ToolbarItem(
-                            placement: .topBarLeading,
-                            content: {
-                                Button {
-                                    showingAddAccount = false
-                                } label: {
-                                    Text("Cancel")
-                                }
-                            },
-                        )
-                    }
-            }
-            .navigationTransition(
-                .zoom(sourceID: "add-account", in: transition),
-            )
-        }
-        .sheet(isPresented: $showingTroubleshooting) {
-            NavigationStack {
-                TroubleshootingView()
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("Done") { showingTroubleshooting = false }
-                        }
-                    }
-            }
-        }
     }
 }
 

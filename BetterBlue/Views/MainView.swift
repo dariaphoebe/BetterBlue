@@ -21,7 +21,13 @@ struct MainView: View {
     ) private var displayedVehicles: [BBVehicle]
 
     @State private var showingSettings = false
+    /// Hoisted from `EmptyAccountsView` so the "Add Account" sheet
+    /// survives brief scenePhase flips (Password autofill, screenshot
+    /// capture, etc.) that unmount the empty-state view via the
+    /// 0xdead10cc guard below (issue #59).
     @State private var showingAddAccount = false
+    /// Same hoisting reason as `showingAddAccount`.
+    @State private var showingTroubleshooting = false
     @State private var selectedVehicleIndex = 0
     @State private var mapCameraPosition: MapCameraPosition?
     @State private var markerMenuPosition = CGPoint.zero
@@ -193,10 +199,21 @@ struct MainView: View {
                     // stay live and resume work when we flip back to
                     // .active. Color.clear (vs EmptyView) keeps the
                     // layout dimensions stable across the transition.
+                    //
+                    // Sheets opened from the empty-state branch
+                    // (`EmptyAccountsView`) survive this swap because
+                    // their state and `.sheet` modifiers are hoisted
+                    // to MainView itself (see `showingAddAccount` /
+                    // `showingTroubleshooting`) — only the view
+                    // hierarchy underneath this conditional gets
+                    // torn down.
                     Color.clear
                 } else if accounts.isEmpty {
-                    // Show only the no accounts view when there are no accounts
-                    EmptyAccountsView(transition: transition)
+                    EmptyAccountsView(
+                        transition: transition,
+                        showingAddAccount: $showingAddAccount,
+                        showingTroubleshooting: $showingTroubleshooting
+                    )
                 } else if displayedVehicles.isEmpty || lastError != nil {
                     EmptyVehiclesView(
                         isLoading: $isLoading,
@@ -231,6 +248,35 @@ struct MainView: View {
                     .navigationTransition(
                         .zoom(sourceID: "settings", in: transition),
                     )
+            }
+            // Add Account + Troubleshooting sheets used to live on
+            // EmptyAccountsView, but its view-tree gets unmounted by
+            // the scenePhase guard above on brief background flips
+            // (Password autofill, screenshot capture — issue #59).
+            // Owning the state + .sheet here keeps them open across
+            // those transitions.
+            .sheet(isPresented: $showingAddAccount) {
+                NavigationView {
+                    AddAccountView()
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("Cancel") { showingAddAccount = false }
+                            }
+                        }
+                }
+                .navigationTransition(
+                    .zoom(sourceID: "add-account", in: transition),
+                )
+            }
+            .sheet(isPresented: $showingTroubleshooting) {
+                NavigationStack {
+                    TroubleshootingView()
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("Done") { showingTroubleshooting = false }
+                            }
+                        }
+                }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
