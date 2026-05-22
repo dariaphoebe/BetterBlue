@@ -115,7 +115,7 @@ struct EVChargingProgressView: View {
                         .offset(x: geometry.size.width * (targetSOC / 100.0))
                 }
 
-                // Text overlay - charge speed on left
+                // Charge speed on the left (when provided).
                 HStack {
                     if let speed = chargeSpeed {
                         Text(speed)
@@ -129,23 +129,41 @@ struct EVChargingProgressView: View {
                 }
                 .frame(height: 32)
 
-                // Time remaining - positioned within target SOC area
+                // Time remaining. When the caller passed a charge
+                // speed, time goes on the right within the target-SOC
+                // area (Live Activity layout). When speed is hidden
+                // (main sheet's EV row — the speed already shows on
+                // the charging label), time moves to the LEFT so the
+                // bar isn't entirely empty on that side.
                 if let timeRemaining = chargeTimeRemaining {
-                    HStack {
-                        Spacer()
-                        Text(timeRemaining)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
-                            .padding(.trailing, 12)
+                    if chargeSpeed != nil {
+                        HStack {
+                            Spacer()
+                            Text(timeRemaining)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                                .padding(.trailing, 12)
+                        }
+                        .frame(
+                            width: targetSOC != nil
+                                ? geometry.size.width * ((targetSOC ?? 100) / 100.0)
+                                : geometry.size.width,
+                            height: 32
+                        )
+                    } else {
+                        HStack {
+                            Text(timeRemaining)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                                .padding(.leading, 12)
+                            Spacer()
+                        }
+                        .frame(height: 32)
                     }
-                    .frame(
-                        width: targetSOC != nil
-                            ? geometry.size.width * ((targetSOC ?? 100) / 100.0)
-                            : geometry.size.width,
-                        height: 32
-                    )
                 }
             }
         }

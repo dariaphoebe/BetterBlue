@@ -199,11 +199,83 @@ struct MainView: View {
         }
     }
 
+    /// Glass-backed settings button used as a top-trailing overlay.
+    /// Lives inside the same `GlassEffectContainer` as the sheet so
+    /// the toolbar-style glass coordinates as one liquid surface.
+    @ViewBuilder
+    private var floatingSettingsButton: some View {
+        Button {
+            showingSettings = true
+        } label: {
+            Image(systemName: "gearshape.fill")
+                .font(.title3)
+                .foregroundStyle(.primary)
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular, in: Circle())
+        .matchedTransitionSource(id: "settings", in: transition)
+    }
+
     @ViewBuilder
     private var mainContent: some View {
         NavigationStack {
-            Group {
-                if scenePhase != .active {
+            stateContent
+                .overlay(alignment: .topTrailing) {
+                    if scenePhase == .active {
+                        floatingSettingsButton
+                            .padding(.top, 8)
+                            .padding(.trailing, 16)
+                    }
+                }
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
+                    .navigationTransition(
+                        .zoom(sourceID: "settings", in: transition),
+                    )
+            }
+            // Add Account + Troubleshooting sheets used to live on
+            // EmptyAccountsView, but its view-tree gets unmounted by
+            // the scenePhase guard above on brief background flips
+            // (Password autofill, screenshot capture — issue #59).
+            // Owning the state + .sheet here keeps them open across
+            // those transitions.
+            .sheet(isPresented: $showingAddAccount) {
+                NavigationView {
+                    AddAccountView()
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("Cancel") { showingAddAccount = false }
+                            }
+                        }
+                }
+                .navigationTransition(
+                    .zoom(sourceID: "add-account", in: transition),
+                )
+            }
+            .sheet(isPresented: $showingTroubleshooting) {
+                NavigationStack {
+                    TroubleshootingView()
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("Done") { showingTroubleshooting = false }
+                            }
+                        }
+                }
+            }
+            // Nav bar hidden — settings button moved to the floating
+            // overlay inside the GlassEffectContainer.
+            .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
+    /// State-dispatched body content (empty / loading / populated).
+    /// Factored out of `mainContent` so it can sit inside a
+    /// `GlassEffectContainer` with the floating settings button.
+    @ViewBuilder
+    private var stateContent: some View {
+        Group {
+            if scenePhase != .active {
                     // Background body renders can trigger SwiftData
                     // fetches (via @Query) that hold a SQLite file
                     // lock across suspension and trip RunningBoard's
@@ -242,50 +314,6 @@ struct MainView: View {
                     // the shared chrome (glass + drag handle).
                     vehiclePager
                 }
-            }
-            .sheet(isPresented: $showingSettings) {
-                SettingsView()
-                    .navigationTransition(
-                        .zoom(sourceID: "settings", in: transition),
-                    )
-            }
-            // Add Account + Troubleshooting sheets used to live on
-            // EmptyAccountsView, but its view-tree gets unmounted by
-            // the scenePhase guard above on brief background flips
-            // (Password autofill, screenshot capture — issue #59).
-            // Owning the state + .sheet here keeps them open across
-            // those transitions.
-            .sheet(isPresented: $showingAddAccount) {
-                NavigationView {
-                    AddAccountView()
-                        .toolbar {
-                            ToolbarItem(placement: .topBarLeading) {
-                                Button("Cancel") { showingAddAccount = false }
-                            }
-                        }
-                }
-                .navigationTransition(
-                    .zoom(sourceID: "add-account", in: transition),
-                )
-            }
-            .sheet(isPresented: $showingTroubleshooting) {
-                NavigationStack {
-                    TroubleshootingView()
-                        .toolbar {
-                            ToolbarItem(placement: .topBarLeading) {
-                                Button("Done") { showingTroubleshooting = false }
-                            }
-                        }
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Settings", systemImage: "gearshape.fill") {
-                        showingSettings = true
-                    }.labelStyle(.iconOnly)
-                }
-                .matchedTransitionSource(id: "settings", in: transition)
-            }
         }
     }
 }

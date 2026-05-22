@@ -103,6 +103,11 @@ struct PersistentVehicleSheet: View {
     /// card (8pt top pad + 5pt capsule + 4pt bottom pad). Used to
     /// size the contentArea's bounded frame.
     private let dragHandleHeight: CGFloat = 17
+    /// Uniform margin (top + trailing) for the refresh button
+    /// overlay. With the button's 20pt radius, this puts the
+    /// button center 36pt from each card edge — visually balanced
+    /// in the top-trailing corner.
+    private let refreshButtonInset: CGFloat = 16
 
     var body: some View {
         // Page: optional error card above + main card. Both share
@@ -128,9 +133,16 @@ struct PersistentVehicleSheet: View {
         .task(id: bbVehicle.vin) { await refreshStatus() }
         .sheet(isPresented: $showingErrorDetails) {
             if let lastActionError {
-                ErrorDetailsSheet(error: lastActionError) {
-                    showingErrorDetails = false
-                }
+                ErrorDetailsSheet(
+                    error: lastActionError,
+                    onDismiss: { showingErrorDetails = false },
+                    onClearError: {
+                        // Wipe the error banner state so the error
+                        // card vanishes from the main sheet.
+                        errorMessage = nil
+                        self.lastActionError = nil
+                    }
+                )
                 .presentationDetents([.medium, .large])
             }
         }
@@ -213,26 +225,31 @@ struct PersistentVehicleSheet: View {
             topTrailingRadius: cornerRadius,
             style: .continuous
         )
+        // ZStack with the glass element + a VStack containing the
+        // content. Drag handle + refresh button now live inside
+        // contentStack's `headerRow` (which is a ZStack of those
+        // header elements), not as outer overlays.
+        // ZStack with `alignment: .top` — without this, the ZStack's
+        // default center alignment vertically centers shorter
+        // content within the cardHeight frame. With multiple
+        // vehicles where the max naturalContentHeight comes from
+        // the tallest card, shorter cards' content gets pushed
+        // down the middle of the larger frame, creating a big
+        // visual gap between the drag handle and the title.
         ZStack(alignment: .top) {
             Color.clear
                 .glassEffect(.regular, in: shape)
             VStack(spacing: 0) {
-                dragHandle
-                // No `.frame(height: cardHeight - dragHandleHeight)`
-                // on contentArea. Constraining it would make its
-                // internal GeometryReader measurement depend on
-                // `cardHeight` — which during a drag changes every
-                // frame, triggering a measurement → preference →
-                // `naturalHeights` → `cardHeight` cascade that
-                // judders. Letting contentArea use its intrinsic
-                // height keeps the measurement stable; the outer
-                // `.mask(shape)` clips overflow at the corners.
                 contentArea
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(height: cardHeight, alignment: .top)
         .mask(shape)
+        // Uniform outer padding on all four sides so the card
+        // breathes equally — matches `.padding(.horizontal,
+        // outerInset)` + `.padding(.bottom, outerInset)`.
+        .padding(.top, outerInset)
         .padding(.horizontal, outerInset)
         .padding(.bottom, outerInset)
     }
@@ -273,14 +290,18 @@ struct PersistentVehicleSheet: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Make the whole card area tap-testable, including the
+            // Spacer between text and chevron. Without this only
+            // the icon / text / chevron themselves were tappable.
+            .contentShape(Rectangle())
+            .background(
+                ZStack {
+                    Color.clear.glassEffect(.regular, in: shape)
+                }
+                .mask(shape)
+            )
         }
         .buttonStyle(.plain)
-        .background(
-            ZStack {
-                Color.clear.glassEffect(.regular, in: shape)
-            }
-            .mask(shape)
-        )
         .padding(.horizontal, outerInset)
         .padding(.top, outerInset)
         // Report only the error card's own outer height + the
@@ -325,7 +346,10 @@ struct PersistentVehicleSheet: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: selectedIndex)
-        .padding(.top, 8)
+        // Small internal padding so the capsule sits near the very
+        // top of the card. Outer card padding takes care of the
+        // breathing room from the actual card edge.
+        .padding(.top, 4)
         .padding(.bottom, 4)
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
@@ -344,17 +368,28 @@ struct PersistentVehicleSheet: View {
         // by the parent pager's `simultaneousGesture` on the
         // ScrollView, which gives finger-follow live updates.
         contentStack
-            .padding(.horizontal, 20)
-            .padding(.top, 5)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 22)
+            // Small top padding — the headerRow ZStack contains the
+            // drag handle, title, and refresh button at the first
+            // row. The drag handle sits at the very top of the
+            // ZStack and the title/refresh row is offset down
+            // by `HStack.padding(.top, 14)` so the total distance
+            // from card top to the refresh button is 8 + 14 = 22pt,
+            // matching the horizontal padding.
+            .padding(.top, 8)
+            // Same 22pt as the horizontal + top padding so the
+            // last detail row sits an even distance from the card's
+            // rounded bottom edge.
+            .padding(.bottom, 22)
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .background(
                 GeometryReader { proxy in
                     Color.clear.preference(
                         key: ContentHeightPreferenceKey.self,
-                        // +17 = drag handle vertical space
-                        // (8 top pad + 5 handle + 4 bottom pad).
-                        value: proxy.size.height + 17
+                        // No offset — drag handle is now a ZStack
+                        // overlay, not a VStack sibling, so it
+                        // doesn't add to the card's needed height.
+                        value: proxy.size.height
                     )
                 }
             )
@@ -388,47 +423,65 @@ struct PersistentVehicleSheet: View {
         }
     }
 
-    // MARK: - Header (name as menu + inline refresh button)
+    // MARK: - Header (ZStack: title + drag handle + refresh button)
 
     @ViewBuilder
     private var headerRow: some View {
-        // Title Menu + Spacer + refresh button — inline so the row
-        // lays out naturally and the refresh button is guaranteed
-        // visible (overlays inside the GlassEffectContainer were
-        // disappearing). Menu is in an HStack with a Spacer (not
-        // `.frame(maxWidth: .infinity)`) so its hit area stays
-        // bound to the label and doesn't eat horizontal swipes.
-        HStack(alignment: .center, spacing: 8) {
-            Menu {
-                vehicleMenuContent
-            } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(bbVehicle.displayName)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.primary)
-                        Image(systemName: "chevron.down")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    if let lastUpdated = bbVehicle.lastUpdated {
-                        Text("Updated \(compactLastUpdated(lastUpdated))")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+        // ZStack of header elements: title + drag handle +
+        // refresh button. The HStack of title+refresh is offset
+        // down by the drag handle's height so the handle sits
+        // visibly above them at the very top of the row.
+        ZStack(alignment: .top) {
+            // Title (leading) + refresh button (trailing),
+            // offset down by drag handle visual area.
+            //
+            // `alignment: .top` (not `.center`) so the refresh
+            // button's top edge sits exactly at the HStack content
+            // top. With `.center`, the taller title VStack (title +
+            // "Updated" subtitle = ~52pt) pushes the centered 40pt
+            // button down by ~6pt, breaking the uniform top/right
+            // margin equation.
+            HStack(alignment: .top) {
+                Menu {
+                    vehicleMenuContent
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Text(bbVehicle.displayName)
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        if let lastUpdated = bbVehicle.lastUpdated {
+                            Text("Updated \(compactLastUpdated(lastUpdated))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
+                .buttonStyle(.plain)
+                Spacer(minLength: 0)
+                CircularIconButton(
+                    systemName: showRefreshSuccess ? "checkmark" : "arrow.clockwise",
+                    tint: showRefreshSuccess ? .green : bbVehicle.primaryColor,
+                    isBusy: isRefreshing
+                ) {
+                    Task { await refreshStatus(forceCacheBypass: true) }
+                }
+                .disabled(isRefreshing)
             }
-            .buttonStyle(.plain)
-            Spacer(minLength: 0)
-            CircularIconButton(
-                systemName: showRefreshSuccess ? "checkmark" : "arrow.clockwise",
-                tint: showRefreshSuccess ? .green : bbVehicle.primaryColor,
-                isBusy: isRefreshing
-            ) {
-                Task { await refreshStatus(forceCacheBypass: true) }
-            }
-            .disabled(isRefreshing)
+            // 14pt of top padding gives 8 (contentStack top) + 14
+            // = 22pt total — matches the 22pt horizontal content
+            // padding, and the extra 2pt over the drag handle's
+            // bottom (drag handle's capsule ends at y=9) gives
+            // ~5pt of breathing room between handle and title.
+            .padding(.top, 14)
+            // Drag handle anchored at the very top of the ZStack.
+            dragHandle
         }
     }
 
@@ -449,9 +502,11 @@ struct PersistentVehicleSheet: View {
                 to: appSettings.preferredDistanceUnit
             )
         }()
-        let chargeSpeed: String? = (ev.charging && ev.chargeSpeed > 0)
-            ? String(format: "%.1f kW", ev.chargeSpeed)
-            : nil
+        // Charge speed is hidden on the EV bar — the same value is
+        // already shown on the Charging section's subtitle
+        // ("Charging at 50.0 kW"). Pass nil so EVChargingProgressView
+        // moves the time-remaining text to the left of the bar.
+        let chargeSpeed: String? = nil
         let timeRemaining: String? = {
             guard ev.charging, ev.chargeTime > .seconds(0) else { return nil }
             let formatted = ev.chargeTime.formatted(
@@ -468,7 +523,7 @@ struct PersistentVehicleSheet: View {
         let tint = bbVehicle.chargingColor
 
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "bolt.fill")
+            Image(systemName: batterySymbol(for: ev.evRange.percentage))
                 .font(.title3)
                 .foregroundStyle(tint)
                 .frame(width: 32, height: 32)
@@ -483,9 +538,6 @@ struct PersistentVehicleSheet: View {
                         .foregroundColor(.secondary)
                 }
                 if ev.charging {
-                    // Thick 32pt charging bar with kW + time +
-                    // dotted target SOC line. Same visual as the
-                    // legacy EV charging view.
                     EVChargingProgressView(
                         formattedRange: "",
                         batteryPercentage: Int(ev.evRange.percentage),
@@ -497,9 +549,6 @@ struct PersistentVehicleSheet: View {
                         chargingColor: bbVehicle.chargingColor
                     )
                 } else {
-                    // Slim 6pt bar in the EV tint (green default).
-                    // Matches the gas row's bar style for visual
-                    // consistency across the PHEV section.
                     slimProgressBar(
                         percentage: ev.evRange.percentage,
                         tint: tint
@@ -574,12 +623,28 @@ struct PersistentVehicleSheet: View {
         let isPluggedIn = ev.pluggedIn
         let icon = isCharging ? "bolt.slash.fill" : "bolt.fill"
         let stateText: String = {
-            if isCharging { return "Charging" }
+            if isCharging {
+                // Include charge speed in the status so the row
+                // doesn't read "Charging / Charging" (title +
+                // subtitle); when the rate is unknown, fall back
+                // to just "Charging".
+                if ev.chargeSpeed > 0 {
+                    return String(format: "Charging at %.1f kW", ev.chargeSpeed)
+                }
+                return "Charging"
+            }
             if isPluggedIn { return "Ready to Charge" }
             return "Unplugged"
         }()
+        // While actively charging, swap the static plug-type glyph
+        // for a lightning bolt — reinforces the "energy flowing"
+        // cue alongside the icon's pulse animation. Falls back to
+        // the brand-specific plug icon when idle / plugged-in.
+        let leadingIcon: Image = isCharging
+            ? Image(systemName: "bolt.fill")
+            : bbVehicle.plugIcon(for: ev.plugType)
         SectionRow(
-            icon: bbVehicle.plugIcon(for: ev.plugType),
+            icon: leadingIcon,
             iconColor: isPluggedIn ? chargingColor : .secondary,
             // Pulse the status icon (left side) while charging is
             // active — matches the legacy ChargingButton cue. The
@@ -589,7 +654,8 @@ struct PersistentVehicleSheet: View {
             // While an action is in-flight, show its live status
             // text (e.g. "Starting Charge", "Waiting for vehicle").
             // Falls back to the steady-state stateText when idle.
-            subtitle: chargingStatusText ?? stateText
+            subtitle: chargingStatusText ?? stateText,
+            menuContent: { chargingMenuContent(isCharging: isCharging) }
         ) {
             // Menu(primaryAction:): tap → toggle, long-press → menu
             // (charge limit settings). Confines the long-press
@@ -606,7 +672,12 @@ struct PersistentVehicleSheet: View {
             } primaryAction: {
                 Task { await toggleCharging(start: !isCharging) }
             }
-            .disabled(isChargingBusy || (!isCharging && !isPluggedIn))
+            // Only disabled when an action is in-flight — NOT when
+            // the vehicle reports "unplugged". Server state can lag
+            // real-world plug state, so the user should always be
+            // able to fire a command if they know their car is
+            // actually plugged in.
+            .disabled(isChargingBusy)
         }
     }
 
@@ -617,13 +688,43 @@ struct PersistentVehicleSheet: View {
             icon: Image(systemName: isLocked ? "lock.fill" : "lock.open.fill"),
             iconColor: isLocked ? bbVehicle.lockColor : bbVehicle.unlockColor,
             title: "Doors",
-            subtitle: lockStatusText ?? (isLocked ? "Locked" : "Unlocked")
+            subtitle: lockStatusText ?? (isLocked ? "Locked" : "Unlocked"),
+            menuContent: {
+                // BOTH actions always available — server state can
+                // lag real-world lock state.
+                Button {
+                    Task { await toggleLock(targetLocked: true) }
+                } label: {
+                    Label("Lock", systemImage: "lock.fill")
+                }
+                Button {
+                    Task { await toggleLock(targetLocked: false) }
+                } label: {
+                    Label("Unlock", systemImage: "lock.open.fill")
+                }
+            }
         ) {
-            CircularIconButton(
-                systemName: isLocked ? "lock.open.fill" : "lock.fill",
-                tint: isLocked ? bbVehicle.unlockColor : bbVehicle.lockColor,
-                isBusy: isLockBusy
-            ) {
+            // Menu(primaryAction:) so long-press surfaces both
+            // Lock + Unlock actions (server state can lag, the
+            // user might want the opposite action anyway).
+            Menu {
+                Button {
+                    Task { await toggleLock(targetLocked: true) }
+                } label: {
+                    Label("Lock", systemImage: "lock.fill")
+                }
+                Button {
+                    Task { await toggleLock(targetLocked: false) }
+                } label: {
+                    Label("Unlock", systemImage: "lock.open.fill")
+                }
+            } label: {
+                CircularIconLabel(
+                    systemName: isLocked ? "lock.open.fill" : "lock.fill",
+                    tint: isLocked ? bbVehicle.unlockColor : bbVehicle.lockColor,
+                    isBusy: isLockBusy
+                )
+            } primaryAction: {
                 Task { await toggleLock(targetLocked: !isLocked) }
             }
             .disabled(isLockBusy)
@@ -640,7 +741,8 @@ struct PersistentVehicleSheet: View {
             // Spin the fan icon (left side) while climate is running.
             iconAnimation: isClimateOn ? .rotate : .none,
             title: "Climate",
-            subtitle: climateStatusText ?? climateSubtitle
+            subtitle: climateStatusText ?? climateSubtitle,
+            menuContent: { climateMenuContent(isClimateOn: isClimateOn) }
         ) {
             // Tap → toggle, long-press → preset shortcuts +
             // Climate Settings.
@@ -837,13 +939,18 @@ struct PersistentVehicleSheet: View {
 
     @ViewBuilder
     private func chargingMenuContent(isCharging: Bool) -> some View {
+        // BOTH actions always available — server state can lag
+        // real-world charging state, so the user should always be
+        // able to fire either command.
         Button {
-            Task { await toggleCharging(start: !isCharging) }
+            Task { await toggleCharging(start: true) }
         } label: {
-            Label(
-                isCharging ? "Stop Charge" : "Start Charge",
-                systemImage: isCharging ? "bolt.slash" : "bolt.fill"
-            )
+            Label("Start Charge", systemImage: "bolt.fill")
+        }
+        Button {
+            Task { await toggleCharging(start: false) }
+        } label: {
+            Label("Stop Charge", systemImage: "bolt.slash")
         }
         Button {
             showingChargeLimitSettings = true
@@ -854,13 +961,17 @@ struct PersistentVehicleSheet: View {
 
     @ViewBuilder
     private func climateMenuContent(isClimateOn: Bool) -> some View {
+        // BOTH actions always available — server state can lag
+        // real-world climate state.
         Button {
-            Task { await toggleClimate(start: !isClimateOn) }
+            Task { await toggleClimate(start: true) }
         } label: {
-            Label(
-                isClimateOn ? "Stop Climate" : "Start Climate",
-                systemImage: isClimateOn ? "fan.slash" : "fan"
-            )
+            Label("Start Climate", systemImage: "fan")
+        }
+        Button {
+            Task { await toggleClimate(start: false) }
+        } label: {
+            Label("Stop Climate", systemImage: "fan.slash")
         }
         // Preset shortcuts (only the non-selected ones — selected is the
         // default behavior of the main tap).
@@ -1078,6 +1189,19 @@ struct PersistentVehicleSheet: View {
         range.range.units.format(range.range.length, to: appSettings.preferredDistanceUnit)
     }
 
+    /// SF Symbol name for the EV row's battery icon. SF Symbols
+    /// only ships battery icons at the 0/25/50/75/100 stops, so
+    /// we pick the closest bucket to the actual percentage.
+    private func batterySymbol(for percentage: Double) -> String {
+        switch percentage {
+        case ..<12.5:  return "battery.0percent"
+        case ..<37.5:  return "battery.25percent"
+        case ..<62.5:  return "battery.50percent"
+        case ..<87.5:  return "battery.75percent"
+        default:       return "battery.100percent"
+        }
+    }
+
     private func chargingDetailText(_ ev: VehicleStatus.EVStatus) -> String? {
         var bits: [String] = []
         if ev.chargeSpeed > 0 {
@@ -1139,40 +1263,48 @@ struct PersistentVehicleSheet: View {
 // MARK: - Section row helper
 
 /// Single horizontal row used by lock / climate / charging sections.
-/// Left: status icon + title above subtitle. Right: caller-supplied
-/// trailing content (the circular action button). The status icon can
-/// pulse (charging) or rotate (climate fan) via `iconAnimation`.
+/// Left: status icon + title above subtitle (wrapped in a `Menu` so
+/// tapping the label area opens the same options as long-pressing
+/// the trailing quick-action button). Right: caller-supplied
+/// trailing content (the circular action button).
 ///
-/// Intentionally has NO row-level contextMenu — that registers a
-/// long-press recognizer that competes with the parent ScrollView's
-/// horizontal pan, blocking swipe-to-page on most of the card. Any
-/// long-press menus live on the trailing button itself (via
-/// `Menu(primaryAction:)`), keeping the recognizer confined to a
-/// small 40pt-square area.
-private struct SectionRow<Trailing: View>: View {
+/// The leading-area Menu is a tap-to-show Menu (not a contextMenu),
+/// so it doesn't add a competing long-press recognizer to the row
+/// — horizontal-swipe paging continues to work.
+private struct SectionRow<Trailing: View, MenuContent: View>: View {
     let icon: Image
     let iconColor: Color
     var iconAnimation: AnimatedStatusIcon.Animation = .none
     let title: String
     let subtitle: String
+    @ViewBuilder var menuContent: () -> MenuContent
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            AnimatedStatusIcon(
-                icon: icon,
-                color: iconColor,
-                animation: iconAnimation
-            )
-            .frame(width: 32, height: 32)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            Menu {
+                menuContent()
+            } label: {
+                HStack(alignment: .center, spacing: 12) {
+                    AnimatedStatusIcon(
+                        icon: icon,
+                        color: iconColor,
+                        animation: iconAnimation
+                    )
+                    .frame(width: 32, height: 32)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             Spacer()
             trailing()
         }
@@ -1387,8 +1519,11 @@ struct VehicleSheetPager: View {
     private let expandedTopInset: CGFloat = 80
     private let snapThreshold: CGFloat = 60
     /// Extra space the main card adds on top of `cardHeight` for
-    /// its outer chrome — 8pt bottom padding only; no top padding.
-    private let chromeOuterInset: CGFloat = 8
+    /// its outer chrome — 8pt of `outerInset` padding on both the
+    /// top and the bottom of `mainCardBody`. Must equal the SUM of
+    /// both, otherwise the ScrollView frame clips one of them and
+    /// the visible outer margin reads as smaller on that side.
+    private let chromeOuterInset: CGFloat = 16
 
     var body: some View {
         GeometryReader { geo in
@@ -1413,17 +1548,21 @@ struct VehicleSheetPager: View {
                     .simultaneousGesture(verticalCardDragGesture)
                     .animation(.spring(response: 0.35, dampingFraction: 0.85), value: detent)
                     .animation(.spring(response: 0.4, dampingFraction: 0.85), value: maxNaturalHeight)
-                    // Explicitly suppress any implicit animation
-                    // context for dragTranslation changes — guarantees
-                    // the live drag updates are applied immediately
-                    // (no spring, no interpolation) regardless of
-                    // any inherited animation transaction.
-                    .animation(nil, value: dragTranslation)
+                    // No `.animation(nil, value: dragTranslation)` —
+                    // the live-drag updates already use a
+                    // disablesAnimations transaction in `onChanged`,
+                    // and we *want* the spring-back from rubber-
+                    // band overdrag (set via `withAnimation` in
+                    // `onEnded`) to animate naturally.
             }
         }
-        // Extend the geometry through the bottom safe area so the
-        // card's outer inset (8pt) lands 8pt above the actual screen
-        // edge, not 8pt above the home indicator safe area.
+        // Extend through the bottom safe area so the card's outer
+        // edge sits the same 8pt off the physical screen on ALL
+        // four sides. Respecting the safe area instead leaves the
+        // ~34pt home-indicator strip below the card, which makes
+        // the *outer* bottom gap (card → screen edge) read as much
+        // larger than the left/right gap. This is the gap the user
+        // measures visually, so it has to match.
         .ignoresSafeArea(edges: .bottom)
     }
 
@@ -1441,11 +1580,38 @@ struct VehicleSheetPager: View {
         let expanded: CGFloat = natural > 0 ? min(natural, screenMax) : screenMax
         let base = detent == .collapsed ? min(collapsedHeight, expanded) : expanded
         // dragTranslation < 0 grows the card, > 0 shrinks it.
+        let unclamped = base - dragTranslation
+
+        // Bounds for the natural drag range — beyond these we
+        // apply rubber-band damping so the card resists the pull.
+        let minBound = min(collapsedHeight, expanded)
+        let maxBound = expanded
+
+        let resolved: CGFloat
+        if unclamped > maxBound {
+            // Over-pull past max (growing past expanded): rubber-
+            // band damping with diminishing returns.
+            // `(overshoot * cap) / (overshoot + cap)` asymptotically
+            // approaches `cap` as overshoot grows — same formula
+            // UIScrollView uses for bounce.
+            let overshoot = unclamped - maxBound
+            let cap: CGFloat = 80
+            let damped = (overshoot * cap) / (overshoot + cap)
+            resolved = maxBound + damped
+        } else if unclamped < minBound {
+            // Over-pull past min (shrinking past collapsed):
+            // same damping in the opposite direction.
+            let undershoot = minBound - unclamped
+            let cap: CGFloat = 80
+            let damped = (undershoot * cap) / (undershoot + cap)
+            resolved = minBound - damped
+        } else {
+            resolved = unclamped
+        }
         // Round to integer points so the card frame snaps to pixel
         // boundaries — fractional cardHeight values cause SwiftUI
         // to re-snap mid-drag, producing visible 1pt judder.
-        let raw = clamp(base - dragTranslation, min: 80, max: expanded)
-        return raw.rounded()
+        return resolved.rounded()
     }
 
     /// Vertical swipe-anywhere gesture. Attached via
@@ -1483,15 +1649,13 @@ struct VehicleSheetPager: View {
                 // Apply via a non-animating transaction so the live
                 // drag update is delivered without inheriting any
                 // implicit animation from a parent transaction.
+                // Always update — `computeCardHeight` applies
+                // rubber-band damping when the result would land
+                // past the natural [collapsed, expanded] range.
                 var t = Transaction()
                 t.disablesAnimations = true
                 withTransaction(t) {
-                    switch (detent, adjusted < 0) {
-                    case (.collapsed, true), (.expanded, false):
-                        dragTranslation = adjusted
-                    default:
-                        break
-                    }
+                    dragTranslation = adjusted
                 }
             }
             .onEnded { value in
@@ -1505,7 +1669,13 @@ struct VehicleSheetPager: View {
                         if predicted > snapThreshold { detent = .collapsed }
                     }
                 }
-                dragTranslation = 0
+                // Spring back from any rubber-band overdrag to the
+                // detent's natural position. Animated reset rather
+                // than instant snap so the card eases back to the
+                // boundary smoothly.
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    dragTranslation = 0
+                }
                 dragActivationOffset = nil
             }
     }

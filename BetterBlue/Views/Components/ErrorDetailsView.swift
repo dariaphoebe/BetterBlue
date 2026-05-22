@@ -106,6 +106,13 @@ struct ErrorDetailsView: View {
 struct ErrorDetailsSheet: View {
     let error: ActionError
     let onDismiss: () -> Void
+    /// Optional callback to clear the underlying error state. When
+    /// provided, the sheet's toolbar shows a "Dismiss" action that
+    /// closes the sheet AND calls this closure to wipe the error
+    /// from the surfacing view. Useful for the
+    /// `PersistentVehicleSheet` error card so the user can permanently
+    /// dismiss a stale error from one place.
+    var onClearError: (() -> Void)? = nil
     @Environment(\.modelContext) private var modelContext
     @Query private var accounts: [BBAccount]
     @State private var shareText: String = ""
@@ -143,6 +150,20 @@ struct ErrorDetailsSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done", action: onDismiss)
+                }
+                if onClearError != nil {
+                    // Destructive action — wipes the error from the
+                    // calling view's state in addition to closing
+                    // the sheet. Sits between Share and Done so
+                    // it's visible but not the primary action.
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(role: .destructive) {
+                            onClearError?()
+                            onDismiss()
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                    }
                 }
             }
             .task {
