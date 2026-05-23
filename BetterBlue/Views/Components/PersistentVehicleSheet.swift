@@ -212,9 +212,23 @@ struct PersistentVehicleSheet: View {
         }
     }
 
-    /// Main glass card body (header + sections + detail rows).
-    /// Sized to `cardHeight`; the page may render an error card
-    /// above it as a sibling in the body's VStack.
+    /// Main glass card body. Single, linear pipeline so the
+    /// card-to-screen gap is uniform on all four sides by
+    /// construction (one trailing `.padding(outerInset)`) and the
+    /// glass + clip use the SAME shape sized to the SAME frame —
+    /// no separate mask/frame/padding chain to keep in sync.
+    ///
+    /// Pipeline:
+    ///   contentStack
+    ///     inner padding (22pt all sides)
+    ///     fixed-size measurement (reports natural content height
+    ///       to the pager via ContentHeightPreferenceKey)
+    ///     bounded to cardHeight (top-anchored — content above the
+    ///       clip line stays put when the card shrinks)
+    ///     glass background in the rounded shape
+    ///     clipShape (clips any content that overflows cardHeight)
+    ///     outer 8pt padding (one uniform value → equal gap on all
+    ///       four sides)
     @ViewBuilder
     private var mainCardBody: some View {
         let bottomCornerRadius = max(8, DisplayCornerRadius.value - outerInset)
@@ -225,33 +239,44 @@ struct PersistentVehicleSheet: View {
             topTrailingRadius: cornerRadius,
             style: .continuous
         )
-        // ZStack with the glass element + a VStack containing the
-        // content. Drag handle + refresh button now live inside
-        // contentStack's `headerRow` (which is a ZStack of those
-        // header elements), not as outer overlays.
-        // ZStack with `alignment: .top` — without this, the ZStack's
-        // default center alignment vertically centers shorter
-        // content within the cardHeight frame. With multiple
-        // vehicles where the max naturalContentHeight comes from
-        // the tallest card, shorter cards' content gets pushed
-        // down the middle of the larger frame, creating a big
-        // visual gap between the drag handle and the title.
-        ZStack(alignment: .top) {
-            Color.clear
-                .glassEffect(.regular, in: shape)
-            VStack(spacing: 0) {
-                contentArea
-                    .fixedSize(horizontal: false, vertical: true)
+        contentStack
+            // Inner content margin. Horizontal + bottom = 22pt so
+            // text sits an even distance from the card edge. Top
+            // is only 8pt because the headerRow ZStack stacks the
+            // drag handle at y=0 inside contentStack and offsets
+            // the title HStack down by 14pt — so the title ends
+            // up at 8 + 14 = 22pt from the card edge (matching
+            // horizontal), and the drag handle sits visibly near
+            // the very top.
+            .padding(.horizontal, 22)
+            .padding(.top, 8)
+            .padding(.bottom, 22)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            // Take the natural height (before the cardHeight clip)
+            // and report it up so the pager knows how tall
+            // "expanded" should be.
+            .fixedSize(horizontal: false, vertical: true)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: ContentHeightPreferenceKey.self,
+                        value: proxy.size.height
+                    )
+                }
+            )
+            // Constrain to the current detent height. Content above
+            // the clip line is preserved (top alignment); overflow
+            // is removed by the .clipShape below.
+            .frame(height: cardHeight, alignment: .top)
+            // Glass behind content, in the SAME shape used by clip.
+            .background {
+                Color.clear.glassEffect(.regular, in: shape)
             }
-        }
-        .frame(height: cardHeight, alignment: .top)
-        .mask(shape)
-        // Uniform outer padding on all four sides so the card
-        // breathes equally — matches `.padding(.horizontal,
-        // outerInset)` + `.padding(.bottom, outerInset)`.
-        .padding(.top, outerInset)
-        .padding(.horizontal, outerInset)
-        .padding(.bottom, outerInset)
+            // Clip both the glass and any overflowing content to
+            // the rounded shape.
+            .clipShape(shape)
+            // ONE uniform outer padding → equal gap on every side.
+            .padding(outerInset)
     }
 
     /// Error notification card rendered above the main card when
@@ -362,40 +387,6 @@ struct PersistentVehicleSheet: View {
         // ScrollView) so it works from anywhere on the card.
     }
 
-    @ViewBuilder
-    private var contentArea: some View {
-        // Plain VStack — no inner scroll. Vertical resize is driven
-        // by the parent pager's `simultaneousGesture` on the
-        // ScrollView, which gives finger-follow live updates.
-        contentStack
-            .padding(.horizontal, 22)
-            // Small top padding — the headerRow ZStack contains the
-            // drag handle, title, and refresh button at the first
-            // row. The drag handle sits at the very top of the
-            // ZStack and the title/refresh row is offset down
-            // by `HStack.padding(.top, 14)` so the total distance
-            // from card top to the refresh button is 8 + 14 = 22pt,
-            // matching the horizontal padding.
-            .padding(.top, 8)
-            // Same 22pt as the horizontal + top padding so the
-            // last detail row sits an even distance from the card's
-            // rounded bottom edge.
-            .padding(.bottom, 22)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: ContentHeightPreferenceKey.self,
-                        // No offset — drag handle is now a ZStack
-                        // overlay, not a VStack sibling, so it
-                        // doesn't add to the card's needed height.
-                        value: proxy.size.height
-                    )
-                }
-            )
-    }
-
-
     // MARK: - Content stack (sections)
 
     @ViewBuilder
@@ -456,11 +447,9 @@ struct PersistentVehicleSheet: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        if let lastUpdated = bbVehicle.lastUpdated {
-                            Text("Updated \(compactLastUpdated(lastUpdated))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
+                        Text(bbVehicle.vin)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
                 .buttonStyle(.plain)
@@ -1504,6 +1493,17 @@ struct VehicleSheetPager: View {
     /// this offset, so `dragTranslation` starts at 0 (no jump from
     /// the gesture's `minimumDistance` deadzone).
     @State private var dragActivationOffset: CGFloat?
+    /// True from the moment the vertical drag commits (gesture
+    /// activation) until the finger lifts. While true, the pager's
+    /// horizontal scroll is disabled — otherwise the ScrollView
+    /// can be left stuck between pages when the user transitions
+    /// from a horizontal pan into a vertical resize mid-gesture.
+    @State private var verticalDragActive = false
+    /// Bumped on every vertical-drag-end. The pager's ScrollViewReader
+    /// watches this and re-snaps to `selectedVehicleIndex` so we
+    /// recover from any partial horizontal offset that slipped in
+    /// before the vertical gesture took over.
+    @State private var pagerResnapTrigger = 0
     /// Per-VIN natural content height. Pager uses `max` across all
     /// reported values so cards render at a consistent height,
     /// preventing height jumps during paging.
@@ -1644,6 +1644,10 @@ struct VehicleSheetPager: View {
                 if dragActivationOffset == nil {
                     guard abs(dy) > abs(dx) else { return }
                     dragActivationOffset = dy
+                    // Lock the horizontal pager for the rest of
+                    // the gesture so the ScrollView can't end up
+                    // stuck between pages while we're resizing.
+                    verticalDragActive = true
                 }
                 let adjusted = dy - (dragActivationOffset ?? 0)
                 // Apply via a non-animating transaction so the live
@@ -1676,7 +1680,15 @@ struct VehicleSheetPager: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                     dragTranslation = 0
                 }
+                let wasActive = verticalDragActive
                 dragActivationOffset = nil
+                verticalDragActive = false
+                if wasActive {
+                    // Force the pager to snap to the current page
+                    // in case a few pixels of horizontal offset
+                    // slipped in before the vertical drag committed.
+                    pagerResnapTrigger &+= 1
+                }
             }
     }
 
@@ -1732,7 +1744,11 @@ struct VehicleSheetPager: View {
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.paging)
-            .scrollDisabled(bbVehicles.count <= 1)
+            // Disable horizontal scrolling while a vertical drag
+            // is in progress — otherwise the user can leave the
+            // pager stuck between pages when they transition from
+            // a horizontal pan into a vertical resize.
+            .scrollDisabled(bbVehicles.count <= 1 || verticalDragActive)
             .onScrollPhaseChange { _, new, context in
                 // Only commit a selection change when the scroll
                 // has fully settled — avoids the mid-drag thrash
@@ -1751,6 +1767,15 @@ struct VehicleSheetPager: View {
             .onChange(of: selectedVehicleIndex) { _, new in
                 withAnimation {
                     proxy.scrollTo(new, anchor: .leading)
+                }
+            }
+            // Re-snap after a vertical drag — if a few pixels of
+            // horizontal offset slipped in before the gesture
+            // committed to vertical, this puts the pager back on
+            // the current page.
+            .onChange(of: pagerResnapTrigger) { _, _ in
+                withAnimation {
+                    proxy.scrollTo(selectedVehicleIndex, anchor: .leading)
                 }
             }
             .onAppear {
