@@ -266,7 +266,10 @@ struct AddAccountView: View {
                 }
             }
 
-            if selectedBrand == .hyundai {
+            // Per-(brand, region) gating — BetterBlueKit owns the
+            // matrix of which combinations actually require a PIN.
+            // Today: Hyundai USA / EU and Kia EU.
+            if requiresPin(brand: selectedBrand, region: selectedRegion) {
                 HStack {
                     Text("PIN")
                     Spacer()

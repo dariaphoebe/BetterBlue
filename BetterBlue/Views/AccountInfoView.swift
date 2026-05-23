@@ -99,7 +99,10 @@ struct AccountInfoView: View {
                     )
                 }
 
-                if account.brandEnum != .kia, account.brandEnum != .fake {
+                // Use the shared (brand, region) matrix from
+                // BetterBlueKit so this stays in sync with the
+                // PIN field on AddAccountView.
+                if requiresPin(brand: account.brandEnum, region: account.regionEnum) {
                     Button("Change PIN") {
                         newPin = ""
                         showingPinDialog = true
