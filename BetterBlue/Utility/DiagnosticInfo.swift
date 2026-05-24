@@ -198,31 +198,44 @@ struct DiagnosticInfo {
 
     /// Read `aps-environment` from the embedded provisioning profile.
     ///
-    /// The bundle ships an `embedded.mobileprovision` file (Apple
-    /// strips it during App Store re-sign on macOS but keeps it on
-    /// iOS / watchOS releases). The file is a CMS-wrapped XML plist;
-    /// the plist body sits inside as plaintext between the `<?xml`
-    /// and `</plist>` markers, so we can extract it without needing
-    /// to fully decode the CMS envelope. The `Entitlements` dict
-    /// inside is what's actually applied to the running process.
+    /// The bundle ships an `embedded.mobileprovision` file at the
+    /// bundle root on iOS / watchOS releases (including TestFlight).
+    /// The file is a CMS-wrapped binary blob; the entitlements plist
+    /// sits inside as plaintext, but the leading marker varies:
+    /// development builds usually have `<?xml`, but App Store /
+    /// TestFlight builds sometimes ship just `<plist` (no XML
+    /// declaration). We try both, and as a last resort scan for the
+    /// `Entitlements` key directly.
     ///
     /// Returns `nil` on the simulator (no embedded.mobileprovision)
     /// and on any parse failure.
     private static func readApsEnvironment() -> String? {
-        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
-              let data = try? Data(contentsOf: url),
-              let start = data.range(of: Data("<?xml".utf8)),
-              let end = data.range(of: Data("</plist>".utf8)) else {
-            return nil
+        // The file lives at the bundle root, not in Resources, so
+        // url(forResource:) sometimes misses it under TestFlight's
+        // re-signed bundle layout. Fall back to the literal path.
+        let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision")
+            ?? URL(fileURLWithPath: Bundle.main.bundlePath)
+                .appendingPathComponent("embedded.mobileprovision")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+
+        // Try the common start markers in order of likelihood. Each
+        // pair (start marker, end marker) brackets the inline plist.
+        let candidates: [(start: Data, end: Data)] = [
+            (Data("<?xml".utf8),  Data("</plist>".utf8)),
+            (Data("<plist".utf8), Data("</plist>".utf8))
+        ]
+        for candidate in candidates {
+            guard let start = data.range(of: candidate.start),
+                  let end = data.range(of: candidate.end) else { continue }
+            let plistData = data.subdata(in: start.lowerBound..<end.upperBound)
+            if let plist = try? PropertyListSerialization.propertyList(from: plistData, format: nil)
+                    as? [String: Any],
+               let entitlements = plist["Entitlements"] as? [String: Any],
+               let aps = entitlements["aps-environment"] as? String {
+                return aps
+            }
         }
-        let plistData = data.subdata(in: start.lowerBound..<end.upperBound)
-        guard let plist = try? PropertyListSerialization.propertyList(from: plistData, format: nil)
-                as? [String: Any],
-              let entitlements = plist["Entitlements"] as? [String: Any],
-              let aps = entitlements["aps-environment"] as? String else {
-            return nil
-        }
-        return aps
+        return nil
     }
 
     var formattedOutput: String {
@@ -391,17 +404,23 @@ struct DiagnosticInfoView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let diagnosticInfo = diagnosticInfo {
-                #if !os(watchOS)
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        ShareLink(
-                            item: diagnosticInfo.formattedOutput,
-                            subject: Text("BetterBlue Sync Diagnostics"),
-                            message: Text("Diagnostic information from BetterBlue app")
-                        ) {
-                            Image(systemName: "square.and.arrow.up")
-                        }
+                // ShareLink works on watchOS 9+. Previously gated to
+                // iOS-only, leaving the watch with no way to export
+                // its own diagnostic — which is exactly the device
+                // that struggles most with sync reports.
+                //
+                // No `message:` parameter — passing one made the
+                // share sheet emit TWO items (a separate text item
+                // with just the message, plus the actual diagnostic
+                // text), so "Save to Files" wrote two files.
+                ToolbarItem(placement: .topBarTrailing) {
+                    ShareLink(
+                        item: diagnosticInfo.formattedOutput,
+                        subject: Text("BetterBlue Sync Diagnostics")
+                    ) {
+                        Image(systemName: "square.and.arrow.up")
                     }
-                #endif
+                }
             }
         }
         .task {

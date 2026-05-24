@@ -107,7 +107,7 @@ final class CloudKitSyncMonitor {
                 date: ckEvent.endDate ?? Date(),
                 type: Self.classify(ckEvent.type),
                 succeeded: ckEvent.succeeded,
-                error: ckEvent.error?.localizedDescription
+                error: Self.describe(ckEvent.error)
             )
             MainActor.assumeIsolated {
                 self?.handle(projected)
@@ -146,6 +146,98 @@ final class CloudKitSyncMonitor {
         @unknown default: return .unknown
         }
     }
+
+    /// Build the most-actionable error string we can from the raw
+    /// `Error` SwiftData hands us. `localizedDescription` alone is
+    /// almost always "The operation couldn't be completed" — useless
+    /// for triage. We pull the CKError code name (e.g.
+    /// "partialFailure", "notAuthenticated"), the numeric code (so
+    /// users can match against Apple's docs), and — for partial
+    /// failures — the per-record error breakdown that CloudKit
+    /// stashes in `partialErrorsByItemID`. Falls back to the raw
+    /// NSError when nothing CloudKit-specific is present.
+    nonisolated private static func describe(_ error: Error?) -> String? {
+        guard let error else { return nil }
+        let nsError = error as NSError
+
+        // CKError gives us the typed code + partial-error breakdown.
+        if let ckError = error as? CKError {
+            var lines: [String] = []
+            let codeName = ckErrorCodeName(ckError.code)
+            lines.append("CKError.\(codeName) (\(ckError.errorCode)): \(nsError.localizedDescription)")
+            if let partials = ckError.partialErrorsByItemID, !partials.isEmpty {
+                // Cap the partial-error list at 5 so a sync with
+                // hundreds of broken records doesn't render an
+                // unreadable wall of text in the share export.
+                let entries = partials.prefix(5).map { itemID, perItemError -> String in
+                    let inner = perItemError as NSError
+                    let innerCK = (perItemError as? CKError)?.code
+                    let innerCodeName = innerCK.map(ckErrorCodeName) ?? "(non-CK)"
+                    return "  • \(itemID): \(innerCodeName) — \(inner.localizedDescription)"
+                }
+                lines.append("Partial failures (\(partials.count) total, showing first 5):")
+                lines.append(contentsOf: entries)
+            }
+            if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+                lines.append("Underlying: \(underlying.domain) \(underlying.code) — \(underlying.localizedDescription)")
+            }
+            return lines.joined(separator: "\n")
+        }
+
+        // Non-CKError — surface the domain + code + description so
+        // we at least know what framework threw it.
+        return "\(nsError.domain) \(nsError.code): \(nsError.localizedDescription)"
+    }
+
+    /// Map a `CKError.Code` raw value to the case name. Apple
+    /// doesn't expose this — we maintain it by hand against the
+    /// public CKError.Code enum. Worth the maintenance because the
+    /// case name is what users / developers can search to find the
+    /// fix (CKErrorDomain 2 means nothing; "partialFailure" is
+    /// immediately greppable).
+    // swiftlint:disable cyclomatic_complexity
+    nonisolated private static func ckErrorCodeName(_ code: CKError.Code) -> String {
+        switch code {
+        case .internalError:                return "internalError"
+        case .partialFailure:               return "partialFailure"
+        case .networkUnavailable:           return "networkUnavailable"
+        case .networkFailure:               return "networkFailure"
+        case .badContainer:                 return "badContainer"
+        case .serviceUnavailable:           return "serviceUnavailable"
+        case .requestRateLimited:           return "requestRateLimited"
+        case .missingEntitlement:           return "missingEntitlement"
+        case .notAuthenticated:             return "notAuthenticated"
+        case .permissionFailure:            return "permissionFailure"
+        case .unknownItem:                  return "unknownItem"
+        case .invalidArguments:             return "invalidArguments"
+        case .resultsTruncated:             return "resultsTruncated"
+        case .serverRecordChanged:          return "serverRecordChanged"
+        case .serverRejectedRequest:        return "serverRejectedRequest"
+        case .assetFileNotFound:            return "assetFileNotFound"
+        case .assetFileModified:            return "assetFileModified"
+        case .incompatibleVersion:          return "incompatibleVersion"
+        case .constraintViolation:          return "constraintViolation"
+        case .operationCancelled:           return "operationCancelled"
+        case .changeTokenExpired:           return "changeTokenExpired"
+        case .batchRequestFailed:           return "batchRequestFailed"
+        case .zoneBusy:                     return "zoneBusy"
+        case .badDatabase:                  return "badDatabase"
+        case .quotaExceeded:                return "quotaExceeded"
+        case .zoneNotFound:                 return "zoneNotFound"
+        case .limitExceeded:                return "limitExceeded"
+        case .userDeletedZone:              return "userDeletedZone"
+        case .tooManyParticipants:          return "tooManyParticipants"
+        case .alreadyShared:                return "alreadyShared"
+        case .referenceViolation:           return "referenceViolation"
+        case .managedAccountRestricted:     return "managedAccountRestricted"
+        case .participantMayNeedVerification: return "participantMayNeedVerification"
+        case .serverResponseLost:           return "serverResponseLost"
+        case .assetNotAvailable:            return "assetNotAvailable"
+        case .accountTemporarilyUnavailable: return "accountTemporarilyUnavailable"
+        @unknown default:                   return "unknown(\(code.rawValue))"
+        }
+    }
+    // swiftlint:enable cyclomatic_complexity
 
     // MARK: - Connectivity check (user-triggered)
 

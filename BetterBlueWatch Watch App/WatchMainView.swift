@@ -95,48 +95,50 @@ struct WatchEmptyStateView: View {
     @State private var showingTroubleshooting = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "car.fill")
-                .font(.system(size: 40))
-                .foregroundColor(.secondary)
-
+        // Drop the giant car icon — it ate ~1/3 of the screen and
+        // forced the helper text to truncate. Text-first layout
+        // leaves room for the full "Add an account on your iPhone
+        // to get started" string and gives the two action buttons
+        // proper tap targets (BorderedProminent + plain bordered)
+        // that can't be hit accidentally together.
+        VStack(spacing: 10) {
             Text("No Vehicles")
                 .font(.headline)
                 .multilineTextAlignment(.center)
 
-            Text("Add an account on your iPhone to get started")
-                .font(.caption)
+            Text("Add an account on your iPhone to get started.")
+                .font(.footnote)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
 
-            VStack(spacing: 4) {
+            // Real buttons (not .plain labels) — proper tap targets,
+            // visible borders, and watchOS handles the row spacing
+            // so users can't tap both at once.
+            VStack(spacing: 6) {
                 Button {
                     showingDiagnostics = true
                 } label: {
-                    HStack {
-                        Image(systemName: "info.circle")
-                        Text("Sync Info")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.blue)
+                    Label("Sync Info", systemImage: "info.circle")
+                        .font(.footnote)
+                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.bordered)
+                .tint(.blue)
 
                 Button {
                     showingTroubleshooting = true
                 } label: {
-                    HStack {
-                        Image(systemName: "questionmark.circle")
-                        Text("Troubleshooting")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.blue)
+                    Label("Troubleshooting", systemImage: "questionmark.circle")
+                        .font(.footnote)
+                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.bordered)
+                .tint(.secondary)
             }
-            .padding(.top, 8)
+            .padding(.top, 4)
         }
-        .padding()
+        .padding(.horizontal)
         .sheet(isPresented: $showingDiagnostics) {
             DiagnosticInfoView()
         }
