@@ -131,7 +131,7 @@ struct RefreshVehicleStatusIntent: AppIntent {
     var vehicle: VehicleEntity
 
     @MainActor
-    func perform() async throws -> some IntentResult & ProvidesDialog {
+    func perform() async throws -> some IntentResult & ReturnsValue<VehicleEntity> & ProvidesDialog {
         let modelContainer = try createSharedModelContainer(enableCloudKit: false)
         let context = ModelContext(modelContainer)
 
@@ -160,7 +160,13 @@ struct RefreshVehicleStatusIntent: AppIntent {
 
         WidgetCenter.shared.reloadAllTimelines()
 
-        return .result(dialog: "\(updatedVehicle.displayName) status updated. \(updatedVehicle.rangeText)")
+        // Return the freshly-populated entity so a Shortcut can chain
+        // "Refresh Vehicle Status → check isPluggedIn → notify."
+        // The dialog still describes the result for Siri.
+        return .result(
+            value: updatedVehicle,
+            dialog: "\(updatedVehicle.displayName) status updated. \(updatedVehicle.rangeText)"
+        )
     }
 }
 
@@ -175,7 +181,7 @@ struct GetVehicleStatusIntent: AppIntent {
     init() {}
 
     @MainActor
-    func perform() async throws -> some IntentResult & ProvidesDialog {
+    func perform() async throws -> some IntentResult & ReturnsValue<VehicleEntity> & ProvidesDialog {
         let modelContainer = try createSharedModelContainer(enableCloudKit: false)
         let context = ModelContext(modelContainer)
 
@@ -236,7 +242,160 @@ struct GetVehicleStatusIntent: AppIntent {
         }
 
         let statusText = statusComponents.joined(separator: "\n")
-        return .result(dialog: IntentDialog(stringLiteral: statusText))
+        // Build the freshly-populated entity so Shortcuts can read
+        // booleans (isPluggedIn, isCharging, isLocked, isClimateOn)
+        // instead of having to parse the status string. The dialog
+        // still describes the result for Siri voice replies.
+        let unit = AppSettings.shared.preferredDistanceUnit
+        let allPresets = try await ClimatePresetEntity.defaultQuery.suggestedEntities()
+        let statusEntity = VehicleEntity(from: bbVehicle, with: unit, allPresets: allPresets)
+        return .result(
+            value: statusEntity,
+            dialog: IntentDialog(stringLiteral: statusText)
+        )
+    }
+}
+
+// MARK: - Property accessor intents
+//
+// These intents are first-class entries in the Shortcuts action
+// library. Each takes a `VehicleEntity` parameter and returns a
+// bare value (`Bool`, `Int`, `String`) so users don't have to
+// discover the "Get Details of Vehicle" auto-generated action or
+// learn the magic-variable property-picker UX — they can just
+// search "Is Vehicle Plugged In" and add it directly.
+//
+// None of these refresh the vehicle status — they read the
+// SwiftData-cached value. Chain `Refresh Vehicle Status` before
+// them if you need a guaranteed-fresh reading.
+
+private func fetchBBVehicle(forVin vin: String, context: ModelContext) throws -> BBVehicle {
+    let vehicles = try context.fetch(FetchDescriptor<BBVehicle>())
+    guard let bbVehicle = vehicles.first(where: { $0.vin == vin }) else {
+        throw IntentError.vehicleNotFound
+    }
+    return bbVehicle
+}
+
+struct IsVehiclePluggedInIntent: AppIntent {
+    static var title: LocalizedStringResource = "Is Vehicle Plugged In"
+    static var description = IntentDescription("Returns true if the vehicle's charging cable is connected.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Vehicle")
+    var vehicle: VehicleEntity
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
+        let context = ModelContext(try createSharedModelContainer(enableCloudKit: false))
+        let bbVehicle = try fetchBBVehicle(forVin: vehicle.vin, context: context)
+        return .result(value: bbVehicle.evStatus?.pluggedIn ?? false)
+    }
+}
+
+struct IsVehicleChargingIntent: AppIntent {
+    static var title: LocalizedStringResource = "Is Vehicle Charging"
+    static var description = IntentDescription("Returns true if the vehicle is actively drawing power.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Vehicle")
+    var vehicle: VehicleEntity
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
+        let context = ModelContext(try createSharedModelContainer(enableCloudKit: false))
+        let bbVehicle = try fetchBBVehicle(forVin: vehicle.vin, context: context)
+        return .result(value: bbVehicle.evStatus?.charging ?? false)
+    }
+}
+
+struct IsVehicleLockedIntent: AppIntent {
+    static var title: LocalizedStringResource = "Is Vehicle Locked"
+    static var description = IntentDescription("Returns true if the vehicle's doors are locked.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Vehicle")
+    var vehicle: VehicleEntity
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
+        let context = ModelContext(try createSharedModelContainer(enableCloudKit: false))
+        let bbVehicle = try fetchBBVehicle(forVin: vehicle.vin, context: context)
+        return .result(value: bbVehicle.lockStatus == .locked)
+    }
+}
+
+struct IsClimateOnIntent: AppIntent {
+    static var title: LocalizedStringResource = "Is Climate Control On"
+    static var description = IntentDescription("Returns true if climate control is currently running.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Vehicle")
+    var vehicle: VehicleEntity
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
+        let context = ModelContext(try createSharedModelContainer(enableCloudKit: false))
+        let bbVehicle = try fetchBBVehicle(forVin: vehicle.vin, context: context)
+        return .result(value: bbVehicle.climateStatus?.airControlOn ?? false)
+    }
+}
+
+struct GetBatteryPercentageIntent: AppIntent {
+    static var title: LocalizedStringResource = "Get Battery Percentage"
+    static var description = IntentDescription("Returns the EV battery percentage (0–100), or the fuel level for ICE vehicles.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Vehicle")
+    var vehicle: VehicleEntity
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<Int> {
+        let context = ModelContext(try createSharedModelContainer(enableCloudKit: false))
+        let bbVehicle = try fetchBBVehicle(forVin: vehicle.vin, context: context)
+        // EV battery first; fall back to gas tank percentage for ICE.
+        if bbVehicle.fuelType.hasElectricCapability, let ev = bbVehicle.evStatus {
+            return .result(value: Int(ev.evRange.percentage.rounded()))
+        }
+        if let gas = bbVehicle.gasRange {
+            return .result(value: Int(gas.percentage.rounded()))
+        }
+        return .result(value: 0)
+    }
+}
+
+struct GetVehicleRangeIntent: AppIntent {
+    static var title: LocalizedStringResource = "Get Vehicle Range"
+    static var description = IntentDescription("Returns the formatted remaining range (e.g. \"218 mi\").")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Vehicle")
+    var vehicle: VehicleEntity
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        // Just re-uses the rangeText we already formatted on the
+        // entity at fetch time — no need to round-trip through the
+        // container.
+        return .result(value: vehicle.rangeText)
+    }
+}
+
+struct GetChargeTimeRemainingIntent: AppIntent {
+    static var title: LocalizedStringResource = "Get Charge Time Remaining"
+    static var description = IntentDescription("Returns the minutes until the charge target is reached. Zero if not charging.")
+    static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Vehicle")
+    var vehicle: VehicleEntity
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<Int> {
+        let context = ModelContext(try createSharedModelContainer(enableCloudKit: false))
+        let bbVehicle = try fetchBBVehicle(forVin: vehicle.vin, context: context)
+        guard let ev = bbVehicle.evStatus, ev.charging else { return .result(value: 0) }
+        let minutes = Int(ev.chargeTime.components.seconds / 60)
+        return .result(value: max(0, minutes))
     }
 }
 
