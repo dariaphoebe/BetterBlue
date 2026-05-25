@@ -198,28 +198,65 @@ struct DiagnosticInfo {
 
     /// Read `aps-environment` from the embedded provisioning profile.
     ///
-    /// The bundle ships an `embedded.mobileprovision` file at the
-    /// bundle root on iOS / watchOS releases (including TestFlight).
-    /// The file is a CMS-wrapped binary blob; the entitlements plist
-    /// sits inside as plaintext, but the leading marker varies:
-    /// development builds usually have `<?xml`, but App Store /
-    /// TestFlight builds sometimes ship just `<plist` (no XML
-    /// declaration). We try both, and as a last resort scan for the
-    /// `Entitlements` key directly.
+    /// Tries three approaches in order. Each gets progressively more
+    /// forgiving — earlier ones are correct but assume a specific
+    /// file layout, later ones are heuristic but work even when
+    /// Apple has reshuffled the bundle (App Store re-sign,
+    /// TestFlight container shape, future iOS privacy sandboxing,
+    /// etc.):
     ///
-    /// Returns `nil` on the simulator (no embedded.mobileprovision)
-    /// and on any parse failure.
+    /// 1. Resolve `embedded.mobileprovision` via `Bundle.url(...)`
+    ///    or the explicit bundle-root path, then extract the inline
+    ///    XML plist between `<?xml`/`<plist` and `</plist>` markers
+    ///    and read `Entitlements["aps-environment"]`. This is the
+    ///    "right" answer when it works.
+    ///
+    /// 2. Same file, but byte-grep for the literal `aps-environment`
+    ///    key and then look ahead in a bounded window for the next
+    ///    `production` or `development` token. Works even when the
+    ///    embedded plist is binary, or when the XML is wrapped in
+    ///    unusual whitespace, or when the file uses CRLF.
+    ///
+    /// 3. Same byte-grep but applied to the WHOLE bundle directory
+    ///    (well — to the data of every regular file at the bundle
+    ///    root). Catches the case where Apple has moved the
+    ///    provisioning info to a different filename (e.g.
+    ///    `embedded.provisionprofile`).
+    ///
+    /// Returns `nil` only when all three fail. On the simulator
+    /// (no provisioning profile at all) returns `nil` quickly.
     private static func readApsEnvironment() -> String? {
-        // The file lives at the bundle root, not in Resources, so
-        // url(forResource:) sometimes misses it under TestFlight's
-        // re-signed bundle layout. Fall back to the literal path.
-        let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision")
+        let primaryURL = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision")
             ?? URL(fileURLWithPath: Bundle.main.bundlePath)
                 .appendingPathComponent("embedded.mobileprovision")
-        guard let data = try? Data(contentsOf: url) else { return nil }
 
-        // Try the common start markers in order of likelihood. Each
-        // pair (start marker, end marker) brackets the inline plist.
+        if let data = try? Data(contentsOf: primaryURL) {
+            if let parsed = extractApsEnvironmentFromPlist(data: data) { return parsed }
+            if let scanned = byteScanApsEnvironment(in: data) { return scanned }
+        }
+
+        // Fallback: scan every file at the bundle root. The
+        // provisioning profile sometimes ships under a different
+        // name on re-signed bundles.
+        let bundleRoot = URL(fileURLWithPath: Bundle.main.bundlePath)
+        if let contents = try? FileManager.default.contentsOfDirectory(
+            at: bundleRoot,
+            includingPropertiesForKeys: nil
+        ) {
+            for fileURL in contents {
+                guard fileURL.lastPathComponent != primaryURL.lastPathComponent,
+                      let data = try? Data(contentsOf: fileURL),
+                      let scanned = byteScanApsEnvironment(in: data) else { continue }
+                return scanned
+            }
+        }
+        return nil
+    }
+
+    /// Structured extraction: find the inline XML plist, decode it,
+    /// read the entitlements dict. Tightest correctness guarantee
+    /// when the markers are present.
+    private static func extractApsEnvironmentFromPlist(data: Data) -> String? {
         let candidates: [(start: Data, end: Data)] = [
             (Data("<?xml".utf8),  Data("</plist>".utf8)),
             (Data("<plist".utf8), Data("</plist>".utf8))
@@ -236,6 +273,35 @@ struct DiagnosticInfo {
             }
         }
         return nil
+    }
+
+    /// Heuristic fallback: locate the literal `aps-environment`
+    /// byte sequence and scan forward for the next `production` or
+    /// `development` token within a 256-byte window. Works for
+    /// XML (`<key>aps-environment</key><string>production</string>`)
+    /// AND for binary plists (where both keys and string values
+    /// are stored as ASCII anyway).
+    private static func byteScanApsEnvironment(in data: Data) -> String? {
+        let key = Data("aps-environment".utf8)
+        guard let keyRange = data.range(of: key) else { return nil }
+        let searchStart = keyRange.upperBound
+        let searchEnd = min(data.endIndex, searchStart + 256)
+        guard searchEnd > searchStart else { return nil }
+        let window = data.subdata(in: searchStart..<searchEnd)
+
+        // Find whichever appears first inside the window. We can't
+        // assume order — XML usually puts the value right after the
+        // key, but a binary plist's offset table could land them in
+        // any order.
+        let prodRange = window.range(of: Data("production".utf8))
+        let devRange = window.range(of: Data("development".utf8))
+        switch (prodRange, devRange) {
+        case let (prod?, dev?):
+            return prod.lowerBound < dev.lowerBound ? "production" : "development"
+        case (.some, .none): return "production"
+        case (.none, .some): return "development"
+        case (.none, .none): return nil
+        }
     }
 
     var formattedOutput: String {
