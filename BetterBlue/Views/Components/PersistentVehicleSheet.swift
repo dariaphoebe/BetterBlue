@@ -77,10 +77,21 @@ struct PersistentVehicleSheet: View {
     @State private var climateStatusText: String?
 
     // Error state — single banner above the sections, taps to
-    // ErrorDetailsSheet for the structured view.
+    // ErrorDetailsSheet for the structured view OR (when the
+    // underlying error is `.requiresMFA`) the MFA verify flow.
     @State private var errorMessage: AttributedString?
     @State private var lastActionError: ActionError?
+    /// Typed APIError captured alongside `lastActionError` so the
+    /// banner tap handler can branch on `.requiresMFA` and route to
+    /// the verify flow instead of the generic error details sheet.
+    /// Without this, the only way out of a bad-MFA state was to
+    /// delete the account and re-add it.
+    @State private var lastAPIError: APIError?
     @State private var showingErrorDetails = false
+    /// MFA flow state — owns the sheet lifecycle for the
+    /// verification flow. Driven by `handleMFAError(_:)` when the
+    /// user taps an `.requiresMFA` error banner.
+    @State private var mfaState = MFAFlowState()
 
     // Per-action info sheets (lifted from the old button files so the
     // circular replacements can still surface them).
@@ -130,6 +141,9 @@ struct PersistentVehicleSheet: View {
         // the top while expanded.
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: detent)
         .ignoresSafeArea(.keyboard)
+        // MFA verification sheet — driven by `mfaState`, surfaced
+        // when the user taps a `.requiresMFA` error banner.
+        .mfaFlow(state: mfaState)
         .task(id: bbVehicle.vin) { await refreshStatus() }
         .sheet(isPresented: $showingErrorDetails) {
             if let lastActionError {
@@ -141,6 +155,7 @@ struct PersistentVehicleSheet: View {
                         // card vanishes from the main sheet.
                         errorMessage = nil
                         self.lastActionError = nil
+                        lastAPIError = nil
                     }
                 )
                 .presentationDetents([.medium, .large])
@@ -287,7 +302,15 @@ struct PersistentVehicleSheet: View {
     private func errorCardView(_ message: AttributedString) -> some View {
         let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
         Button {
-            if lastActionError != nil {
+            // requiresMFA gets its own dedicated verification sheet.
+            // Without this branch the only way past a stale MFA
+            // session was deleting and re-adding the account.
+            if let apiError = lastAPIError, apiError.errorType == .requiresMFA {
+                handleMFAError(apiError)
+            } else if lastActionError != nil {
+                // Everything else surfaces the structured error
+                // details (action + type + collapsible raw response)
+                // rather than the full HTTP log dump.
                 showingErrorDetails = true
             }
         } label: {
@@ -306,7 +329,10 @@ struct PersistentVehicleSheet: View {
                         .tint(.blue)
                 }
                 Spacer()
-                if lastActionError != nil {
+                // Chevron always shows when we can drill in —
+                // either to the MFA verify sheet or the error
+                // details sheet.
+                if lastAPIError?.errorType == .requiresMFA || lastActionError != nil {
                     Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -1013,6 +1039,7 @@ struct PersistentVehicleSheet: View {
             showRefreshSuccess = false
             errorMessage = nil
             lastActionError = nil
+            lastAPIError = nil
         }
         do {
             guard let account = bbVehicle.account else {
@@ -1157,20 +1184,100 @@ struct PersistentVehicleSheet: View {
     private func handleError(_ error: Error, action: String) {
         let message: String
         if let apiError = error as? APIError {
-            message = apiError.message
+            // Route through the friendly-message mapping so the
+            // banner reads as user-actionable text — most
+            // importantly so the `.requiresMFA` case ends with
+            // "Tap to verify," which is the only hint the user
+            // gets that the banner is interactive.
+            message = friendlyMessage(for: apiError, action: action)
+            lastAPIError = apiError
         } else {
             message = "\(action) failed: \(error.localizedDescription)"
+            lastAPIError = nil
         }
         if let attributed = try? AttributedString(markdown: message) {
             errorMessage = attributed
         } else {
             errorMessage = AttributedString(message)
         }
-        lastActionError = ActionError(
-            action: action,
-            error: error,
-            accountId: bbVehicle.account?.id
-        )
+        // MFA gets its own dedicated flow — skip the generic
+        // error-details sheet so dismissing the MFA verify view
+        // doesn't leave a stale `ActionError` pointer that would
+        // route the next banner tap to the wrong sheet.
+        if let apiError = error as? APIError, apiError.errorType == .requiresMFA {
+            lastActionError = nil
+        } else {
+            lastActionError = ActionError(
+                action: action,
+                error: error,
+                accountId: bbVehicle.account?.id
+            )
+        }
+    }
+
+    /// Map an APIError to the friendly banner text. Mirrors the
+    /// legacy `VehicleCardView.getUserFriendlyErrorMessage(for:)`
+    /// so the redesign keeps the same messaging users are used to.
+    private func friendlyMessage(for error: APIError, action: String) -> String {
+        switch error.errorType {
+        case .invalidCredentials:
+            return "Login expired — please check account settings"
+        case .invalidPin:
+            return "PIN validation failed — check account settings"
+        case .invalidVehicleSession:
+            return "Vehicle session expired — trying to reconnect"
+        case .serverError:
+            return "Server temporarily unavailable — try again later"
+        case .concurrentRequest:
+            return "Another request in progress — please wait and try again"
+        case .failedRetryLogin:
+            return "Unable to reconnect — check account settings"
+        case .requiresMFA:
+            // Echoes the server-side context ("Session expired",
+            // "MFA Required", etc.) and tells the user the banner
+            // is tappable.
+            return "\(error.message) — Tap to verify"
+        case .general:
+            return friendlyGeneralMessage(for: error, action: action)
+        case .kiaInvalidRequest:
+            return error.message
+        case .regionNotSupported:
+            return "This region is not yet supported"
+        }
+    }
+
+    private func friendlyGeneralMessage(for error: APIError, action: String) -> String {
+        if error.message.contains("timeout") || error.message.contains("timed out") {
+            return "Vehicle not responding — try again later"
+        }
+        if error.message.lowercased().contains("network") {
+            return "Network connection issue — check your internet"
+        }
+        if error.message.contains("404") {
+            return "Vehicle not found on server"
+        }
+        if error.message.contains("500") || error.message.contains("502") || error.message.contains("503") {
+            return "Server temporarily unavailable — try again later"
+        }
+        if let code = error.code, code >= 400 {
+            return "Server error (\(code)) — try again later"
+        }
+        return "\(action) failed — check connection and try again"
+    }
+
+    /// Open the MFA verification sheet for the captured APIError.
+    /// On success, clear all error state and refresh status so the
+    /// banner goes away and the sheet shows fresh data.
+    private func handleMFAError(_ error: APIError) {
+        guard let account = bbVehicle.account else { return }
+        mfaState.start(from: error, account: account) {
+            await MainActor.run {
+                errorMessage = nil
+                lastAPIError = nil
+                lastActionError = nil
+            }
+            await refreshStatus()
+        }
     }
 
     // MARK: - Formatters

@@ -199,33 +199,26 @@ struct MainView: View {
         }
     }
 
-    /// Glass-backed settings button used as a top-trailing overlay.
-    /// Lives inside the same `GlassEffectContainer` as the sheet so
-    /// the toolbar-style glass coordinates as one liquid surface.
-    @ViewBuilder
-    private var floatingSettingsButton: some View {
-        Button {
-            showingSettings = true
-        } label: {
-            Image(systemName: "gearshape.fill")
-                .font(.title3)
-                .foregroundStyle(.primary)
-                .frame(width: 44, height: 44)
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular, in: Circle())
-        .matchedTransitionSource(id: "settings", in: transition)
-    }
-
     @ViewBuilder
     private var mainContent: some View {
         NavigationStack {
             stateContent
-                .overlay(alignment: .topTrailing) {
-                    if scenePhase == .active {
-                        floatingSettingsButton
-                            .padding(.top, 8)
-                            .padding(.trailing, 16)
+                .toolbar {
+                    // Real toolbar button — system-sized hit target
+                    // (44pt). Previously this lived as a glass-backed
+                    // floating overlay in the top-trailing corner,
+                    // but its visible bounds were a small Circle and
+                    // the actual tap target ended up tiny (`.plain`
+                    // buttonStyle on a non-padded label means hits
+                    // only land on the icon pixels themselves).
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showingSettings = true
+                        } label: {
+                            Image(systemName: "gearshape.fill")
+                                .foregroundStyle(.primary)
+                        }
+                        .matchedTransitionSource(id: "settings", in: transition)
                     }
                 }
             .sheet(isPresented: $showingSettings) {
@@ -263,9 +256,6 @@ struct MainView: View {
                         }
                 }
             }
-            // Nav bar hidden — settings button moved to the floating
-            // overlay inside the GlassEffectContainer.
-            .toolbar(.hidden, for: .navigationBar)
         }
     }
 
