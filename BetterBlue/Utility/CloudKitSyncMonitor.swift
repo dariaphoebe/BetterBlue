@@ -234,6 +234,8 @@ final class CloudKitSyncMonitor {
         case .serverResponseLost:           return "serverResponseLost"
         case .assetNotAvailable:            return "assetNotAvailable"
         case .accountTemporarilyUnavailable: return "accountTemporarilyUnavailable"
+        case .participantAlreadyInvited: return "participantAlreadyInvited"
+            
         @unknown default:                   return "unknown(\(code.rawValue))"
         }
     }

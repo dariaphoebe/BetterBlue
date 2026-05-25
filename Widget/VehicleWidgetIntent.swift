@@ -7,8 +7,6 @@
 
 import AppIntents
 import BetterBlueKit
-import CoreLocation
-import MapKit
 import SwiftData
 import SwiftUI
 import WidgetKit
@@ -97,15 +95,23 @@ struct VehicleEntity: AppEntity {
     @Property(title: "Last Updated")
     var lastUpdated: Date?
 
-    /// Vehicle's last reported parking location. Modeled as a
-    /// `CLPlacemark` (via `MKPlacemark`) so Shortcuts treats it as
-    /// a first-class Location magic variable — usable with "Show
-    /// in Maps," "Get Distance From," "Get Directions To," etc.
-    /// Replaces the old separate `latitude`/`longitude` Doubles
-    /// (still computed internally, but no longer surfaced as their
-    /// own picker entries).
-    @Property(title: "Location")
-    var location: CLPlacemark?
+    /// Vehicle's last reported latitude. Surfaced as a Number in
+    /// Shortcuts so users can pipe it into Maps actions or do
+    /// distance math against another coordinate.
+    ///
+    /// Originally tried to combine lat + lon into a single
+    /// `CLPlacemark`-typed Location magic variable, but the only
+    /// from-coords constructor (`MKPlacemark`) is deprecated in
+    /// iOS / watchOS 26, and the App Intents framework's
+    /// `_IntentValue` list doesn't include the replacement
+    /// (`MKMapItem`) or even `CLLocation`. So separate Doubles
+    /// it is until Apple updates App Intents.
+    @Property(title: "Latitude")
+    var latitude: Double?
+
+    /// Vehicle's last reported longitude. See `latitude`.
+    @Property(title: "Longitude")
+    var longitude: Double?
 
     @Property(title: "Brand")
     var brand: String?
@@ -338,18 +344,9 @@ struct VehicleEntity: AppEntity {
         if let climate = bbVehicle.climateStatus {
             isClimateOn = climate.airControlOn
         }
-        // CLPlacemark via MKPlacemark — the latter is a subclass
-        // of CLPlacemark with a public coordinate-only init, which
-        // CLPlacemark itself doesn't have. Setting `name` to the
-        // vehicle name makes the location chip label nicely in the
-        // Shortcuts UI ("My IONIQ 5" instead of raw coords).
         if let loc = bbVehicle.location {
-            location = MKPlacemark(
-                coordinate: CLLocationCoordinate2D(
-                    latitude: loc.latitude,
-                    longitude: loc.longitude
-                )
-            )
+            latitude = loc.latitude
+            longitude = loc.longitude
         }
     }
 }
