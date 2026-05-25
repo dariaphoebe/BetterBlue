@@ -78,6 +78,7 @@ struct VehicleCustomizationSection: View {
             || bbVehicle.lockColorName != nil
             || bbVehicle.unlockColorName != nil
             || bbVehicle.startClimateColorName != nil
+            || bbVehicle.stopColorName != nil
     }
 
     private func resetAllColors() {
@@ -87,6 +88,7 @@ struct VehicleCustomizationSection: View {
         bbVehicle.lockColorName = nil
         bbVehicle.unlockColorName = nil
         bbVehicle.startClimateColorName = nil
+        bbVehicle.stopColorName = nil
         do {
             try modelContext.save()
             WidgetCenter.shared.reloadAllTimelines()
@@ -162,6 +164,13 @@ struct VehicleCustomizationSection: View {
                 selection: $bbVehicle.startClimateColorName,
                 defaultName: "blue",
                 previewStyle: .quickAction(symbol: "fan")
+            )
+
+            colorRow(
+                title: "Stop Color",
+                selection: $bbVehicle.stopColorName,
+                defaultName: "red",
+                previewStyle: .quickAction(symbol: "stop.fill")
             )
         } header: {
             HStack {

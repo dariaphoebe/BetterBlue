@@ -114,6 +114,11 @@ class BBVehicle {
     /// Climate quick-action button + "Stop Climate" status color.
     /// Default: blue.
     var startClimateColorName: String?
+    /// Color used by the "Stop" quick-action buttons (stop charging,
+    /// stop climate) when the corresponding action is currently
+    /// running. Default: red — chosen so the button reads as
+    /// "actionable destructive" rather than greyed-out / disabled.
+    var stopColorName: String?
 
     // MARK: - Fuel-type override
     //
@@ -523,6 +528,12 @@ extension BBVehicle {
         CustomColor.color(forName: startClimateColorName, default: "blue")
     }
 
+    /// Color for "Stop" buttons in active states (stop charging,
+    /// stop climate). Default: red.
+    var stopColor: Color {
+        CustomColor.color(forName: stopColorName, default: "red")
+    }
+
     /// Returns the appropriate plug icon based on current charging state and user's port type preference
     func plugIcon(for plugType: VehicleStatus.PlugType?) -> Image {
         guard let plugType else {
@@ -550,6 +561,7 @@ extension BBVehicle: Encodable {
         case customName, isHidden, sortOrder, backgroundColorName, watchBackgroundColorName
         case chargePortTypeRaw, debugConfiguration, debugLiveActivity, enableSeatHeatControls
         case primaryColorName, chargingColorName, gasColorName, lockColorName, unlockColorName, startClimateColorName
+        case stopColorName
         case fuelTypeOverrideRaw
         case showClimateDurationOverride
         case climatePresets
@@ -601,6 +613,7 @@ extension BBVehicle: Encodable {
         try container.encodeIfPresent(lockColorName, forKey: .lockColorName)
         try container.encodeIfPresent(unlockColorName, forKey: .unlockColorName)
         try container.encodeIfPresent(startClimateColorName, forKey: .startClimateColorName)
+        try container.encodeIfPresent(stopColorName, forKey: .stopColorName)
 
         // Fuel-type override (nil = inferred). Useful in debug exports
         // for diagnosing reports like #41 where the inferred type is

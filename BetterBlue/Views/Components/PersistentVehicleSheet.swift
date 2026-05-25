@@ -636,7 +636,10 @@ struct PersistentVehicleSheet: View {
         let chargingColor = bbVehicle.chargingColor
         let isCharging = ev.charging
         let isPluggedIn = ev.pluggedIn
-        let icon = isCharging ? "bolt.slash.fill" : "bolt.fill"
+        // `stop.fill` reads as "tap to stop" unambiguously — the
+        // old `bolt.slash.fill` glyph said "no charging" and was
+        // easily misread as "charging is unavailable / disabled."
+        let icon = isCharging ? "stop.fill" : "bolt.fill"
         let stateText: String = {
             if isCharging {
                 // Include charge speed in the status so the row
@@ -681,7 +684,13 @@ struct PersistentVehicleSheet: View {
             } label: {
                 CircularIconLabel(
                     systemName: icon,
-                    tint: isCharging ? .secondary : (isPluggedIn ? chargingColor : .secondary.opacity(0.5)),
+                    // Stop state uses the customizable stopColor
+                    // (default red) so the button reads as
+                    // actionable. Previously used `.secondary`,
+                    // which made it look disabled / unresponsive.
+                    tint: isCharging
+                        ? bbVehicle.stopColor
+                        : (isPluggedIn ? chargingColor : .secondary.opacity(0.5)),
                     isBusy: isChargingBusy
                 )
             } primaryAction: {
@@ -765,8 +774,13 @@ struct PersistentVehicleSheet: View {
                 climateMenuContent(isClimateOn: isClimateOn)
             } label: {
                 CircularIconLabel(
-                    systemName: isClimateOn ? "fan.slash" : "fan",
-                    tint: isClimateOn ? .secondary : climateColor,
+                    // `stop.fill` reads as "tap to stop" — same
+                    // reasoning as the charging button (the slash
+                    // glyph read as disabled/unavailable).
+                    systemName: isClimateOn ? "stop.fill" : "fan",
+                    // Stop state uses stopColor (default red) so
+                    // the button doesn't look disabled.
+                    tint: isClimateOn ? bbVehicle.stopColor : climateColor,
                     isBusy: isClimateBusy
                 )
             } primaryAction: {
