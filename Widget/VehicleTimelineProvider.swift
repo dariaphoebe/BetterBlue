@@ -72,7 +72,13 @@ struct VehicleTimelineProvider: AppIntentTimelineProvider {
         // lived container internally. Doing them outside our main
         // container scope means no overlap on SQLite handles while we
         // pump them.
-        let unit = await MainActor.run { AppSettings.shared.preferredDistanceUnit }
+        // Use the live UserDefaults read (not the cached singleton)
+        // so changes the user just made in the main app are reflected
+        // on this timeline reload, even if the widget extension's
+        // process was reused. The cached singleton would otherwise
+        // keep returning the value that was current when this widget
+        // process first launched.
+        let unit = AppSettings.liveDistanceUnit()
         let allPresets = (try? await ClimatePresetEntity.defaultQuery.suggestedEntities()) ?? []
 
         do {

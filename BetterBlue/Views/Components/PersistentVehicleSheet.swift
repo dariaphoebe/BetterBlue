@@ -87,21 +87,19 @@ struct PersistentVehicleSheet: View {
     /// Without this, the only way out of a bad-MFA state was to
     /// delete the account and re-add it.
     @State private var lastAPIError: APIError?
-    @State private var showingErrorDetails = false
+
     /// MFA flow state — owns the sheet lifecycle for the
     /// verification flow. Driven by `handleMFAError(_:)` when the
-    /// user taps an `.requiresMFA` error banner.
-    @State private var mfaState = MFAFlowState()
-
-    // Per-action info sheets (lifted from the old button files so the
-    // circular replacements can still surface them).
-    @State private var showingVehicleInfo = false
-    @State private var showingAccountInfo = false
-    @State private var showingHTTPLogs = false
-    @State private var showingVehicleConfiguration = false
-    @State private var showingTripDetails = false
-    @State private var showingClimateSettings = false
-    @State private var showingChargeLimitSettings = false
+    /// user taps an `.requiresMFA` error banner. Hoisted to
+    /// MainView so the sheet survives the `scenePhase != .active`
+    /// view-tree swap that tears this view down.
+    @Bindable var mfaState: MFAFlowState
+    /// Shared presentation for every per-vehicle informational
+    /// sheet (vehicle info, account info, HTTP logs, climate
+    /// settings, etc.). Same hoisting rationale as `mfaState` —
+    /// owning state at MainView keeps these sheets presented when
+    /// the user briefly backgrounds the app.
+    let sheetPresentation: VehicleSheetPresentation
 
     /// Outer padding on all four sides — the card "floats" inside
     /// this gap. Bottom matches sides so the spacing is uniform.
@@ -141,90 +139,15 @@ struct PersistentVehicleSheet: View {
         // the top while expanded.
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: detent)
         .ignoresSafeArea(.keyboard)
-        // MFA verification sheet — driven by `mfaState`, surfaced
-        // when the user taps a `.requiresMFA` error banner.
-        .mfaFlow(state: mfaState)
+        // MFA `.mfaFlow(state:)` modifier is attached at MainView
+        // (not here) so the sheet survives MainView's `scenePhase
+        // != .active` view-tree swap.
+        // Per-vehicle sheets (vehicle info, account info, HTTP logs,
+        // climate settings, etc.) are attached at MainView via the
+        // shared `VehicleSheetPresentation` — so they survive the
+        // `scenePhase != .active` view-tree swap. We trigger them
+        // by calling `sheetPresentation.show(.someCase(...))`.
         .task(id: bbVehicle.vin) { await refreshStatus() }
-        .sheet(isPresented: $showingErrorDetails) {
-            if let lastActionError {
-                ErrorDetailsSheet(
-                    error: lastActionError,
-                    onDismiss: { showingErrorDetails = false },
-                    onClearError: {
-                        // Wipe the error banner state so the error
-                        // card vanishes from the main sheet.
-                        errorMessage = nil
-                        self.lastActionError = nil
-                        lastAPIError = nil
-                    }
-                )
-                .presentationDetents([.medium, .large])
-            }
-        }
-        .sheet(isPresented: $showingVehicleInfo) {
-            NavigationView {
-                VehicleInfoView(bbVehicle: bbVehicle)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarLeading) {
-                            Button("Done") { showingVehicleInfo = false }
-                        }
-                    }
-            }
-        }
-        .sheet(isPresented: $showingAccountInfo) {
-            if let account = bbVehicle.account {
-                NavigationView {
-                    AccountInfoView(account: account)
-                        .toolbar {
-                            ToolbarItem(placement: .navigationBarLeading) {
-                                Button("Done") { showingAccountInfo = false }
-                            }
-                        }
-                }
-            }
-        }
-        .sheet(isPresented: $showingHTTPLogs) {
-            if let account = bbVehicle.account {
-                NavigationView {
-                    HTTPLogView(accountId: account.id, transition: nil)
-                        .toolbar {
-                            ToolbarItem(placement: .navigationBarLeading) {
-                                Button("Done") { showingHTTPLogs = false }
-                            }
-                        }
-                }
-            }
-        }
-        .sheet(isPresented: $showingVehicleConfiguration) {
-            if bbVehicle.account?.brandEnum == .fake {
-                NavigationView {
-                    FakeVehicleDetailView(vehicle: bbVehicle)
-                        .navigationTitle("Configure Vehicle")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .navigationBarLeading) {
-                                Button("Done") { showingVehicleConfiguration = false }
-                            }
-                        }
-                }
-            }
-        }
-        .sheet(isPresented: $showingTripDetails) {
-            NavigationView {
-                TripDetailsView(bbVehicle: bbVehicle)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarLeading) {
-                            Button("Done") { showingTripDetails = false }
-                        }
-                    }
-            }
-        }
-        .sheet(isPresented: $showingClimateSettings) {
-            ClimateSettingsSheet(vehicle: bbVehicle)
-        }
-        .sheet(isPresented: $showingChargeLimitSettings) {
-            ChargeLimitSettingsSheet(vehicle: bbVehicle)
-        }
     }
 
     /// Main glass card body. Single, linear pipeline so the
@@ -307,11 +230,11 @@ struct PersistentVehicleSheet: View {
             // session was deleting and re-adding the account.
             if let apiError = lastAPIError, apiError.errorType == .requiresMFA {
                 handleMFAError(apiError)
-            } else if lastActionError != nil {
+            } else if let actionError = lastActionError {
                 // Everything else surfaces the structured error
                 // details (action + type + collapsible raw response)
                 // rather than the full HTTP log dump.
-                showingErrorDetails = true
+                showErrorDetails(actionError)
             }
         } label: {
             HStack(spacing: 12) {
@@ -668,7 +591,9 @@ struct PersistentVehicleSheet: View {
             // active — matches the legacy ChargingButton cue. The
             // trailing quick-action button stays static.
             iconAnimation: isCharging ? .pulse : .none,
-            title: "Charging",
+            // No `title:` — the bolt icon already says "charging,"
+            // so the status line ("Ready to Charge" / "Charging at
+            // 50 kW" / "Unplugged") stands on its own.
             // While an action is in-flight, show its live status
             // text (e.g. "Starting Charge", "Waiting for vehicle").
             // Falls back to the steady-state stateText when idle.
@@ -711,7 +636,8 @@ struct PersistentVehicleSheet: View {
         SectionRow(
             icon: Image(systemName: isLocked ? "lock.fill" : "lock.open.fill"),
             iconColor: isLocked ? bbVehicle.lockColor : bbVehicle.unlockColor,
-            title: "Doors",
+            // No `title:` — the lock icon already implies "doors,"
+            // so "Locked" / "Unlocked" alone reads cleanly.
             subtitle: lockStatusText ?? (isLocked ? "Locked" : "Unlocked"),
             menuContent: {
                 // BOTH actions always available — server state can
@@ -764,7 +690,8 @@ struct PersistentVehicleSheet: View {
             iconColor: isClimateOn ? climateColor : .secondary,
             // Spin the fan icon (left side) while climate is running.
             iconAnimation: isClimateOn ? .rotate : .none,
-            title: "Climate",
+            // No `title:` — the fan icon already says "climate," so
+            // the status text ("Off" / "Running at 72°F") is enough.
             subtitle: climateStatusText ?? climateSubtitle,
             menuContent: { climateMenuContent(isClimateOn: isClimateOn) }
         ) {
@@ -871,8 +798,8 @@ struct PersistentVehicleSheet: View {
     @ViewBuilder
     private func errorBanner(_ message: AttributedString) -> some View {
         Button {
-            if lastActionError != nil {
-                showingErrorDetails = true
+            if let actionError = lastActionError {
+                showErrorDetails(actionError)
             }
         } label: {
             HStack(spacing: 8) {
@@ -929,37 +856,39 @@ struct PersistentVehicleSheet: View {
         if bbVehicle.fuelType.hasElectricCapability,
            bbVehicle.account?.supportsEVTripDetails == true {
             Button {
-                showingTripDetails = true
+                sheetPresentation.show(.tripDetails(vehicle: bbVehicle))
             } label: {
                 Label("Trip History", systemImage: "chart.line.uptrend.xyaxis")
             }
         }
 
         Button {
-            showingVehicleInfo = true
+            sheetPresentation.show(.vehicleInfo(vehicle: bbVehicle))
         } label: {
             Label("Vehicle Info", systemImage: "car.fill")
         }
 
-        Button {
-            showingAccountInfo = true
-        } label: {
-            Label("Account Info", systemImage: "person.circle")
-        }
-
-        if AppSettings.shared.debugModeEnabled {
+        if let account = bbVehicle.account {
             Button {
-                showingHTTPLogs = true
+                sheetPresentation.show(.accountInfo(account: account))
             } label: {
-                Label("HTTP Logs", systemImage: "network")
+                Label("Account Info", systemImage: "person.circle")
             }
-        }
 
-        if bbVehicle.account?.brandEnum == .fake {
-            Button {
-                showingVehicleConfiguration = true
-            } label: {
-                Label("Configure Vehicle", systemImage: "gearshape.fill")
+            if AppSettings.shared.debugModeEnabled {
+                Button {
+                    sheetPresentation.show(.httpLogs(account: account))
+                } label: {
+                    Label("HTTP Logs", systemImage: "network")
+                }
+            }
+
+            if account.brandEnum == .fake {
+                Button {
+                    sheetPresentation.show(.vehicleConfiguration(vehicle: bbVehicle))
+                } label: {
+                    Label("Configure Vehicle", systemImage: "gearshape.fill")
+                }
             }
         }
     }
@@ -982,7 +911,7 @@ struct PersistentVehicleSheet: View {
             Label("Stop Charge", systemImage: "bolt.slash")
         }
         Button {
-            showingChargeLimitSettings = true
+            sheetPresentation.show(.chargeLimitSettings(vehicle: bbVehicle))
         } label: {
             Label("Charge Limits", systemImage: "battery.100percent")
         }
@@ -1013,7 +942,7 @@ struct PersistentVehicleSheet: View {
             }
         }
         Button {
-            showingClimateSettings = true
+            sheetPresentation.show(.climateSettings(vehicle: bbVehicle))
         } label: {
             Label("Climate Settings", systemImage: "gearshape.fill")
         }
@@ -1294,6 +1223,21 @@ struct PersistentVehicleSheet: View {
         }
     }
 
+    /// Surface the structured error details sheet via the shared
+    /// presentation. The `onClear` closure captures `self` so it
+    /// can wipe the originating view's banner state when the user
+    /// taps "Clear Error" — if the view has been remounted by the
+    /// time that happens (e.g. scenePhase swap), the closure
+    /// silently no-ops, which is fine because the new view starts
+    /// with no banner state anyway.
+    private func showErrorDetails(_ error: ActionError) {
+        sheetPresentation.show(.errorDetails(error: error) {
+            errorMessage = nil
+            lastActionError = nil
+            lastAPIError = nil
+        })
+    }
+
     // MARK: - Formatters
 
     private func formatRange(_ range: VehicleStatus.FuelRange) -> String {
@@ -1386,7 +1330,13 @@ private struct SectionRow<Trailing: View, MenuContent: View>: View {
     let icon: Image
     let iconColor: Color
     var iconAnimation: AnimatedStatusIcon.Animation = .none
-    let title: String
+    /// Optional header label ("Charging", "Doors", "Climate"). When
+    /// nil, the row collapses to a single prominent status line —
+    /// useful for the action rows where the title was redundant
+    /// with the icon and the status text alone communicates the
+    /// state ("Ready to Charge" / "Locked" / "Off" already imply
+    /// which section they belong to).
+    var title: String?
     let subtitle: String
     @ViewBuilder var menuContent: () -> MenuContent
     @ViewBuilder var trailing: () -> Trailing
@@ -1403,14 +1353,25 @@ private struct SectionRow<Trailing: View, MenuContent: View>: View {
                         animation: iconAnimation
                     )
                     .frame(width: 32, height: 32)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
+                    if let title {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(title)
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    } else {
+                        // No header — promote the status text to the
+                        // title's font weight so the row still has
+                        // visual heft alongside the icon and trailing
+                        // button.
+                        Text(subtitle)
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.primary)
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
                     }
                 }
                 .contentShape(Rectangle())
@@ -1605,6 +1566,15 @@ struct VehicleSheetPager: View {
     let bbVehicles: [BBVehicle]
     @Binding var selectedVehicleIndex: Int
     let onSuccessfulRefresh: (() -> Void)?
+    /// MFA flow state hoisted from MainView. Passed through to each
+    /// `PersistentVehicleSheet` so all cards share the same
+    /// instance — there's only ever one MFA flow active at a time,
+    /// and keeping it MainView-owned means the sheet survives the
+    /// scenePhase view-tree swap.
+    let mfaState: MFAFlowState
+    /// Same hoisting rationale — shared presentation for all
+    /// per-vehicle sheets.
+    let sheetPresentation: VehicleSheetPresentation
 
     @State private var detent: SheetDetent = .collapsed
     /// Live vertical drag offset from the pager's swipe gesture.
@@ -1646,6 +1616,7 @@ struct VehicleSheetPager: View {
     /// both, otherwise the ScrollView frame clips one of them and
     /// the visible outer margin reads as smaller on that side.
     private let chromeOuterInset: CGFloat = 16
+
 
     var body: some View {
         GeometryReader { geo in
@@ -1697,7 +1668,14 @@ struct VehicleSheetPager: View {
     }
 
     private func computeCardHeight(geo: GeometryProxy) -> CGFloat {
-        let screenMax = geo.size.height - expandedTopInset
+        // `geo.size.height` can be 0 (or briefly tiny) on first
+        // GeometryReader pass before layout completes. Without the
+        // `max(0, ...)` clamp, `screenMax` goes negative, which
+        // propagates through `expanded`/`base`/`resolved` and ends
+        // up as a negative `.frame(height:)`, producing the
+        // "Invalid frame dimension (negative or non-finite)"
+        // runtime warnings.
+        let screenMax = max(0, geo.size.height - expandedTopInset)
         let natural = maxNaturalHeight
         let expanded: CGFloat = natural > 0 ? min(natural, screenMax) : screenMax
         let base = detent == .collapsed ? min(collapsedHeight, expanded) : expanded
@@ -1733,7 +1711,10 @@ struct VehicleSheetPager: View {
         // Round to integer points so the card frame snaps to pixel
         // boundaries — fractional cardHeight values cause SwiftUI
         // to re-snap mid-drag, producing visible 1pt judder.
-        return resolved.rounded()
+        // Final `max(0, …)` belt-and-suspenders against rubber-
+        // band damping producing a negative value when `expanded`
+        // is unusually small (early in the GeometryReader's life).
+        return max(0, resolved.rounded())
     }
 
     /// Vertical swipe-anywhere gesture. Attached via
@@ -1843,7 +1824,9 @@ struct VehicleSheetPager: View {
                             selectedIndex: selectedVehicleIndex,
                             detent: $detent,
                             cardHeight: cardHeight,
-                            onSuccessfulRefresh: onSuccessfulRefresh
+                            onSuccessfulRefresh: onSuccessfulRefresh,
+                            mfaState: mfaState,
+                            sheetPresentation: sheetPresentation
                         )
                         .containerRelativeFrame(.horizontal)
                         .onPreferenceChange(ContentHeightPreferenceKey.self) { value in
@@ -1871,7 +1854,8 @@ struct VehicleSheetPager: View {
             // pager stuck between pages when they transition from
             // a horizontal pan into a vertical resize.
             .scrollDisabled(bbVehicles.count <= 1 || verticalDragActive)
-            .onScrollPhaseChange { _, new, context in
+            .onScrollPhaseChange { old, new, context in
+                BBLogger.info(.app, "[SVI] pager scroll phase \(old) → \(new), offsetX=\(context.geometry.contentOffset.x), width=\(context.geometry.containerSize.width)")
                 // Only commit a selection change when the scroll
                 // has fully settled — avoids the mid-drag thrash
                 // that the `.scrollPosition` binding caused.
@@ -1883,6 +1867,7 @@ struct VehicleSheetPager: View {
                 )
                 let clamped = max(0, min(bbVehicles.count - 1, index))
                 if clamped != selectedVehicleIndex {
+                    BBLogger.info(.app, "[SVI] pager onScrollPhaseChange setting \(selectedVehicleIndex) → \(clamped)")
                     selectedVehicleIndex = clamped
                 }
             }
@@ -1901,6 +1886,7 @@ struct VehicleSheetPager: View {
                 }
             }
             .onAppear {
+                BBLogger.info(.app, "[SVI] pager .onAppear (idx=\(selectedVehicleIndex), count=\(bbVehicles.count))")
                 proxy.scrollTo(selectedVehicleIndex, anchor: .leading)
             }
         }

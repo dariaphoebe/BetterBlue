@@ -28,7 +28,25 @@ struct MainView: View {
     @State private var showingAddAccount = false
     /// Same hoisting reason as `showingAddAccount`.
     @State private var showingTroubleshooting = false
+    /// Tag printed on first init + on key events so we can tell if
+    /// MainView itself is being reinstantiated (which would reset
+    /// `@State`). Random per-instance, stable for the lifetime of
+    /// the struct.
+    private let instanceTag = String(UUID().uuidString.prefix(6))
+
     @State private var selectedVehicleIndex = 0
+    /// Owned here (not in `PersistentVehicleSheet`) so the MFA verify
+    /// sheet survives the `scenePhase != .active` view-tree swap in
+    /// `stateContent` below. If this lived on the per-vehicle sheet,
+    /// backgrounding the app during MFA would tear the sheet down
+    /// and the user would be stuck in a re-auth loop on return.
+    @State private var mfaState = MFAFlowState()
+    /// Same hoisting rationale as `mfaState` — owns the presentation
+    /// state for every per-vehicle informational sheet (vehicle info,
+    /// account info, HTTP logs, climate/charge settings, error
+    /// details, etc.). All 8 are driven by `presentation.active` and
+    /// rendered by a single `.sheet(item:)` on `mainContent`.
+    @State private var sheetPresentation = VehicleSheetPresentation()
     @State private var mapCameraPosition: MapCameraPosition?
     @State private var markerMenuPosition = CGPoint.zero
     @State private var isLoading = false
@@ -111,10 +129,26 @@ struct MainView: View {
     var body: some View {
         GeometryReader { geometry in
             mainContent
+                .onChange(of: scenePhase) { old, new in
+                    BBLogger.info(.app, "[SVI-\(instanceTag)] scenePhase \(old) → \(new) (idx=\(selectedVehicleIndex), count=\(displayedVehicles.count))")
+                }
                 .onAppear {
+                    BBLogger.info(.app, "[SVI-\(instanceTag)] MainView .onAppear (idx=\(selectedVehicleIndex), count=\(displayedVehicles.count))")
                     screenHeight = geometry.size.height
                     BBLogger.debug(.app, "MapCentering: Screen height initialized: \(Int(screenHeight))px")
-                    centerOnFirstAvailableVehicle(reason: "initial view appearance")
+                    // Center the map on the current vehicle. Pure
+                    // map operation — does NOT touch
+                    // `selectedVehicleIndex` (that was the bug
+                    // `centerOnFirstAvailableVehicle` introduced on
+                    // every return-from-background). On cold launch
+                    // with cached SwiftData, currentVehicle is
+                    // already populated here, so the map renders
+                    // zoomed in on the right vehicle from the start
+                    // instead of showing a continent-scale view
+                    // until the user swipes.
+                    if currentVehicle?.coordinate != nil {
+                        updateMapRegion(reason: "initial view appearance")
+                    }
                     Task {
                         await loadVehiclesForAllAccounts()
                     }
@@ -126,17 +160,25 @@ struct MainView: View {
                         updateMapRegion(reason: "screen size changed")
                     }
                 }
-                .onChange(of: currentVehicle?.location) { _, _ in
-                    updateMapRegion(reason: "vehicle location updated")
+                .onChange(of: currentVehicle?.location, initial: true) { _, newLocation in
+                    // `initial: true` catches the cold-launch case
+                    // where displayedVehicles populates asynchronously
+                    // — the .onAppear above runs before
+                    // currentVehicle is valid, so we'd otherwise be
+                    // stuck on the continent-scale default region
+                    // until the user swiped.
+                    if newLocation != nil {
+                        updateMapRegion(reason: "vehicle location updated")
+                    }
                 }
                 .onChange(of: displayedVehicles.count) { oldCount, newCount in
+                    BBLogger.info(.app, "[SVI] count: \(oldCount) → \(newCount), idx=\(selectedVehicleIndex)")
                     // If vehicles were removed/hidden, ensure selectedVehicleIndex is valid
                     if selectedVehicleIndex >= displayedVehicles.count,
                        !displayedVehicles.isEmpty {
-                        selectedVehicleIndex = min(
-                            selectedVehicleIndex,
-                            displayedVehicles.count - 1,
-                        )
+                        let clamped = min(selectedVehicleIndex, displayedVehicles.count - 1)
+                        BBLogger.info(.app, "[SVI] clamping \(selectedVehicleIndex) → \(clamped) (count=\(displayedVehicles.count))")
+                        selectedVehicleIndex = clamped
                     }
 
                     // Only update map region if this is a meaningful change after startup
@@ -152,7 +194,8 @@ struct MainView: View {
                         }
                     }
                 }
-                .onChange(of: selectedVehicleIndex) { _, _ in
+                .onChange(of: selectedVehicleIndex) { old, new in
+                    BBLogger.info(.app, "[SVI] CHANGED \(old) → \(new) (vin=\(currentVehicle?.vin ?? "nil"))")
                     Task {
                         await refreshCurrentVehicleIfNeeded(modelContext: modelContext)
                     }
@@ -164,6 +207,7 @@ struct MainView: View {
                     if let index = displayedVehicles.firstIndex(where: {
                         $0.vin == vin
                     }) {
+                        BBLogger.info(.app, "[SVI] selectVehicle notification → \(index) (vin=\(vin))")
                         selectedVehicleIndex = index
                         updateMapRegion(reason: "deep link to vehicle")
                         Task {
@@ -194,7 +238,9 @@ struct MainView: View {
             VehicleSheetPager(
                 bbVehicles: displayedVehicles,
                 selectedVehicleIndex: $selectedVehicleIndex,
-                onSuccessfulRefresh: { lastError = nil }
+                onSuccessfulRefresh: { lastError = nil },
+                mfaState: mfaState,
+                sheetPresentation: sheetPresentation
             )
         }
     }
@@ -256,6 +302,90 @@ struct MainView: View {
                         }
                 }
             }
+            // MFA verify sheet attached at this layer (alongside the
+            // other hoisted sheets) so it stays presented across the
+            // scenePhase view-tree swap. Triggered from individual
+            // `PersistentVehicleSheet`s when the user taps a
+            // `.requiresMFA` error banner — they share the same
+            // `mfaState` instance owned by MainView.
+            .mfaFlow(state: mfaState)
+            // Single dispatcher for every per-vehicle sheet. Same
+            // hoisting reason as `.mfaFlow` above. Bindable wrapping
+            // gives us the `Binding<Sheet?>` that `.sheet(item:)`
+            // requires from an @Observable.
+            .sheet(item: Bindable(sheetPresentation).active) { sheet in
+                vehicleSheetContent(for: sheet)
+            }
+        }
+    }
+
+    /// Resolves a `VehicleSheetPresentation.Sheet` case into its
+    /// actual view. Lives here (not in `PersistentVehicleSheet`)
+    /// because the `.sheet(item:)` modifier is hosted at MainView.
+    @ViewBuilder
+    private func vehicleSheetContent(for sheet: VehicleSheetPresentation.Sheet) -> some View {
+        switch sheet {
+        case .errorDetails(let error, let onClear):
+            ErrorDetailsSheet(
+                error: error,
+                onDismiss: { sheetPresentation.dismiss() },
+                onClearError: {
+                    onClear()
+                    sheetPresentation.dismiss()
+                }
+            )
+            .presentationDetents([.medium, .large])
+        case .vehicleInfo(let vehicle):
+            NavigationView {
+                VehicleInfoView(bbVehicle: vehicle)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Done") { sheetPresentation.dismiss() }
+                        }
+                    }
+            }
+        case .accountInfo(let account):
+            NavigationView {
+                AccountInfoView(account: account)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Done") { sheetPresentation.dismiss() }
+                        }
+                    }
+            }
+        case .httpLogs(let account):
+            NavigationView {
+                HTTPLogView(accountId: account.id, transition: nil)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Done") { sheetPresentation.dismiss() }
+                        }
+                    }
+            }
+        case .vehicleConfiguration(let vehicle):
+            NavigationView {
+                FakeVehicleDetailView(vehicle: vehicle)
+                    .navigationTitle("Configure Vehicle")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Done") { sheetPresentation.dismiss() }
+                        }
+                    }
+            }
+        case .tripDetails(let vehicle):
+            NavigationView {
+                TripDetailsView(bbVehicle: vehicle)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Done") { sheetPresentation.dismiss() }
+                        }
+                    }
+            }
+        case .climateSettings(let vehicle):
+            ClimateSettingsSheet(vehicle: vehicle)
+        case .chargeLimitSettings(let vehicle):
+            ChargeLimitSettingsSheet(vehicle: vehicle)
         }
     }
 
@@ -265,28 +395,15 @@ struct MainView: View {
     @ViewBuilder
     private var stateContent: some View {
         Group {
-            if scenePhase != .active {
-                    // Background body renders can trigger SwiftData
-                    // fetches (via @Query) that hold a SQLite file
-                    // lock across suspension and trip RunningBoard's
-                    // 0xdead10cc kill. Render a no-op view while we
-                    // aren't active so the body never reads any of
-                    // the @Query properties (`accounts`,
-                    // `displayedVehicles`). The .onAppear / .task /
-                    // .onReceive modifiers attached to mainContent
-                    // stay live and resume work when we flip back to
-                    // .active. Color.clear (vs EmptyView) keeps the
-                    // layout dimensions stable across the transition.
-                    //
-                    // Sheets opened from the empty-state branch
-                    // (`EmptyAccountsView`) survive this swap because
-                    // their state and `.sheet` modifiers are hoisted
-                    // to MainView itself (see `showingAddAccount` /
-                    // `showingTroubleshooting`) — only the view
-                    // hierarchy underneath this conditional gets
-                    // torn down.
-                    Color.clear
-                } else if accounts.isEmpty {
+            // Note: previously branched on `scenePhase != .active`
+            // and rendered `Color.clear` to dodge `@Query` reads
+            // during background → 0xdead10cc kill. That guard
+            // hasn't actually prevented the crashes (they keep
+            // showing up in TestFlight reports) and the
+            // unmount-on-background was breaking sheet survival,
+            // scroll-position restoration, and generally making
+            // the app feel clunky. Removed.
+            if accounts.isEmpty {
                     EmptyAccountsView(
                         transition: transition,
                         showingAddAccount: $showingAddAccount,
@@ -348,17 +465,31 @@ extension MainView {
         }
     }
 
-    /// Center map on first available vehicle
+    /// Center map on first available vehicle. ALSO reassigns
+    /// `selectedVehicleIndex` only when there isn't already a valid
+    /// selection — otherwise this function ran on `.onAppear` and
+    /// every return-from-background, snapping the user back to
+    /// vehicle 0 (or the first one with a location) regardless of
+    /// what they were actually viewing.
     private func centerOnFirstAvailableVehicle(
         reason: String = "initial load",
     ) {
         BBLogger.debug(.app, "MapCentering: centerOnFirstAvailableVehicle called - \(reason)")
 
-        // Find first vehicle with location data
+        // If the current selection already has a location, just
+        // re-center the map on it. Don't touch selectedVehicleIndex.
+        if currentVehicle?.coordinate != nil {
+            updateMapRegion(reason: "re-centering on current vehicle (\(reason))")
+            return
+        }
+
+        // Otherwise (no current selection, or it has no location)
+        // pick the first vehicle that does have one.
         if let firstVehicleWithLocation = displayedVehicles.first(where: {
             $0.coordinate != nil
         }),
             let index = displayedVehicles.firstIndex(of: firstVehicleWithLocation) {
+            BBLogger.info(.app, "[SVI] centerOnFirstAvailableVehicle setting \(selectedVehicleIndex) → \(index) (reason=\(reason))")
             selectedVehicleIndex = index
             updateMapRegion(
                 reason: "centering on \(firstVehicleWithLocation.displayName)",
@@ -383,6 +514,7 @@ extension MainView {
             $0.coordinate != nil
         }),
             let index = displayedVehicles.firstIndex(of: firstVehicleWithLocation) {
+            BBLogger.info(.app, "[SVI] initializeFromSwiftData setting \(selectedVehicleIndex) → \(index)")
             selectedVehicleIndex = index
             let center = calculateMapCenter(
                 for: firstVehicleWithLocation,

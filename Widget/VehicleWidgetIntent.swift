@@ -361,11 +361,12 @@ struct VehicleQuery: EntityQuery {
             let context = ModelContext(modelContainer)
 
             let vehicles = try context.fetch(FetchDescriptor<BBVehicle>())
-            let settings = AppSettings.shared
+            // Live UserDefaults read — see `AppSettings.liveDistanceUnit`.
+            let unit = AppSettings.liveDistanceUnit()
 
             return vehicles
                 .filter { identifiers.contains($0.id) }
-                .map { VehicleEntity(from: $0, with: settings.preferredDistanceUnit, allPresets: presets) }
+                .map { VehicleEntity(from: $0, with: unit, allPresets: presets) }
         }
     }
 
@@ -381,9 +382,9 @@ struct VehicleQuery: EntityQuery {
             )
 
             let vehicles = try context.fetch(descriptor)
-            let settings = AppSettings.shared
+            let unit = AppSettings.liveDistanceUnit()
 
-            return vehicles.map { VehicleEntity(from: $0, with: settings.preferredDistanceUnit, allPresets: presets) }
+            return vehicles.map { VehicleEntity(from: $0, with: unit, allPresets: presets) }
         }
     }
 }

@@ -154,7 +154,7 @@ struct RefreshVehicleStatusIntent: AppIntent {
             forceVehicleListRefresh: true
         )
 
-        let unit = AppSettings.shared.preferredDistanceUnit
+        let unit = AppSettings.liveDistanceUnit()
         let allPresets = try await ClimatePresetEntity.defaultQuery.suggestedEntities()
         let updatedVehicle = VehicleEntity(from: bbVehicle, with: unit, allPresets: allPresets)
 
@@ -246,7 +246,7 @@ struct GetVehicleStatusIntent: AppIntent {
         // booleans (isPluggedIn, isCharging, isLocked, isClimateOn)
         // instead of having to parse the status string. The dialog
         // still describes the result for Siri voice replies.
-        let unit = AppSettings.shared.preferredDistanceUnit
+        let unit = AppSettings.liveDistanceUnit()
         let allPresets = try await ClimatePresetEntity.defaultQuery.suggestedEntities()
         let statusEntity = VehicleEntity(from: bbVehicle, with: unit, allPresets: allPresets)
         return .result(

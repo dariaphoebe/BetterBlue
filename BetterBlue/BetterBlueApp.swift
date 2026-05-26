@@ -20,7 +20,22 @@ extension Notification.Name {
 struct BetterBlueApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
-    var sharedModelContainer: ModelContainer = {
+    /// Holds the result of the container init — either the actual
+    /// `ModelContainer` (success path) or a `String` describing why
+    /// we couldn't build one. Replaces a `fatalError` that was
+    /// observed crashing real TestFlight users one second after
+    /// launch when `createSharedModelContainer()` happened to throw
+    /// (transient iCloud availability, App Group container not
+    /// ready yet, SQLite migration in progress, …). Crashing in
+    /// that situation guaranteed every subsequent launch would
+    /// crash too until the underlying condition cleared — bad UX
+    /// when a polite error screen lets the user retry.
+    enum ContainerResult {
+        case ready(ModelContainer)
+        case failed(String)
+    }
+
+    let containerResult: ContainerResult = {
         // Configure BetterBlueKit to use OSLog via AppLogger
         BBLogger.sink = OSLogSink.shared
 
@@ -45,30 +60,37 @@ struct BetterBlueApp: App {
             cleanupOrphanedVehicles(container: container)
             cleanupOrphanedClimatePresets(container: container)
 
-            return container
+            return .ready(container)
         } catch {
             BBLogger.error(.app, "Failed to create ModelContainer: \(error)")
-            fatalError("Could not create ModelContainer: \(error)")
+            return .failed(error.localizedDescription)
         }
     }()
 
     var body: some Scene {
         WindowGroup {
-            MainView()
-                .onOpenURL { url in
-                    handleDeepLink(url)
-                }
+            switch containerResult {
+            case .ready(let container):
+                MainView()
+                    .onOpenURL { url in
+                        handleDeepLink(url)
+                    }
+                    .modelContainer(container)
+            case .failed(let reason):
+                ContainerFailureView(reason: reason)
+            }
         }
-        .modelContainer(sharedModelContainer)
     }
 
     private func handleDeepLink(_ url: URL) {
+        BBLogger.info(.app, "[SVI] handleDeepLink \(url.absoluteString)")
         guard url.scheme == "betterblue" else { return }
 
         let pathComponents = url.pathComponents.dropFirst() // Drop the leading "/"
 
         if url.host == "vehicle",
            let vin = pathComponents.first {
+            BBLogger.info(.app, "[SVI] handleDeepLink posting .selectVehicle vin=\(vin)")
             NotificationCenter.default.post(
                 name: .selectVehicle,
                 object: vin,
@@ -89,10 +111,21 @@ struct BetterBlueApp: App {
         }
     }
 
+    /// Resolves the deep-link `ModelContext`. Returns nil when the
+    /// container couldn't be created at launch — in that case the
+    /// app is showing `ContainerFailureView`, so there's nothing
+    /// useful we can do with the deep link anyway.
+    private var deepLinkContext: ModelContext? {
+        if case .ready(let container) = containerResult {
+            return container.mainContext
+        }
+        return nil
+    }
+
     private func handleStartClimate(vin: String, presetId: UUID?, presetName: String?, presetIcon: String?) {
         Task { @MainActor in
             do {
-                let context = sharedModelContainer.mainContext
+                guard let context = deepLinkContext else { return }
 
                 var descriptor = FetchDescriptor<BBVehicle>(predicate: #Predicate { $0.vin == vin })
                 descriptor.fetchLimit = 1
@@ -131,7 +164,7 @@ struct BetterBlueApp: App {
     private func handleStartCharge(vin: String) {
         Task { @MainActor in
             do {
-                let context = sharedModelContainer.mainContext
+                guard let context = deepLinkContext else { return }
 
                 var descriptor = FetchDescriptor<BBVehicle>(predicate: #Predicate { $0.vin == vin })
                 descriptor.fetchLimit = 1
@@ -217,12 +250,68 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        // Handle notification tap - navigate to vehicle if VIN provided
+        // Handle notification tap - navigate to vehicle if VIN provided.
+        // Project the Sendable bits out before crossing the actor
+        // boundary — `UNNotificationResponse` itself isn't Sendable.
         if let vin = response.notification.request.content.userInfo["vin"] as? String {
+            let notificationId = response.notification.request.identifier
             Task { @MainActor in
+                BBLogger.info(.app, "[SVI] push-notification tap posting .selectVehicle vin=\(vin) (notificationId=\(notificationId))")
                 NotificationCenter.default.post(name: .selectVehicle, object: vin)
             }
         }
         completionHandler()
     }
 }
+
+/// Shown when `createSharedModelContainer()` throws at launch.
+/// Used to be a `fatalError`, which guaranteed the app would
+/// crash one second after launch every time until the underlying
+/// condition cleared. A polite error screen with a retry button
+/// is a much better failure mode — the user can at least kill +
+/// relaunch the app explicitly once they fix whatever was wrong
+/// (e.g. signed back into iCloud), and the bug report sent in
+/// from this screen is more actionable than a SIGTRAP.
+struct ContainerFailureView: View {
+    let reason: String
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.icloud.fill")
+                .font(.system(size: 56))
+                .foregroundStyle(.orange)
+            Text("Couldn't Load Your Data")
+                .font(.title2)
+                .fontWeight(.semibold)
+            Text("BetterBlue couldn't open its local data store. This usually clears up after signing back into iCloud or restarting the device.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            // Surface the raw error so the user can include it in a
+            // bug report. Read-only, selectable, monospaced so we
+            // recognize it instantly when it lands in our inbox.
+            ScrollView {
+                Text(reason)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(maxHeight: 160)
+            .padding(12)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+
+            Button {
+                exit(0)
+            } label: {
+                Text("Quit")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(24)
+    }
+}
+

@@ -160,33 +160,75 @@ final class CloudKitSyncMonitor {
         guard let error else { return nil }
         let nsError = error as NSError
 
-        // CKError gives us the typed code + partial-error breakdown.
-        if let ckError = error as? CKError {
-            var lines: [String] = []
-            let codeName = ckErrorCodeName(ckError.code)
-            lines.append("CKError.\(codeName) (\(ckError.errorCode)): \(nsError.localizedDescription)")
-            if let partials = ckError.partialErrorsByItemID, !partials.isEmpty {
-                // Cap the partial-error list at 5 so a sync with
-                // hundreds of broken records doesn't render an
-                // unreadable wall of text in the share export.
-                let entries = partials.prefix(5).map { itemID, perItemError -> String in
-                    let inner = perItemError as NSError
-                    let innerCK = (perItemError as? CKError)?.code
-                    let innerCodeName = innerCK.map(ckErrorCodeName) ?? "(non-CK)"
-                    return "  • \(itemID): \(innerCodeName) — \(inner.localizedDescription)"
-                }
-                lines.append("Partial failures (\(partials.count) total, showing first 5):")
-                lines.append(contentsOf: entries)
+        var lines: [String] = []
+        lines.append("\(nsError.domain) \(nsError.code): \(nsError.localizedDescription)")
+
+        // Walk the full underlying-error chain. NSPersistentCloudKit-
+        // Container loves to wrap the actual CKError two or three
+        // levels deep under an NSCocoaErrorDomain shell — Cocoa
+        // 134419 ("The operation couldn't be completed") is a
+        // canonical example. We surface every level so the user's
+        // diagnostic share contains the real cause, not just the
+        // outermost generic wrapper.
+        var current: NSError? = nsError
+        var depth = 0
+        while let next = current?.userInfo[NSUnderlyingErrorKey] as? NSError, depth < 6 {
+            depth += 1
+            let indent = String(repeating: "  ", count: depth)
+            if let ckCode = (next as? CKError)?.code ?? ckErrorCode(from: next) {
+                lines.append("\(indent)↳ CKError.\(ckErrorCodeName(ckCode)) (\(next.code)): \(next.localizedDescription)")
+            } else {
+                lines.append("\(indent)↳ \(next.domain) \(next.code): \(next.localizedDescription)")
             }
-            if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
-                lines.append("Underlying: \(underlying.domain) \(underlying.code) — \(underlying.localizedDescription)")
-            }
-            return lines.joined(separator: "\n")
+            current = next
         }
 
-        // Non-CKError — surface the domain + code + description so
-        // we at least know what framework threw it.
-        return "\(nsError.domain) \(nsError.code): \(nsError.localizedDescription)"
+        // CKError-specific: partial-failure breakdown. Apple stashes
+        // per-record errors under `partialErrorsByItemID` and that
+        // map is the difference between "I don't know what failed"
+        // and "this specific zone is broken." Cap at 5 so a sync
+        // with hundreds of bad records doesn't render an unreadable
+        // wall of text in the share export.
+        if let ckError = error as? CKError,
+           let partials = ckError.partialErrorsByItemID, !partials.isEmpty {
+            lines.append("Partial failures (\(partials.count) total, showing first 5):")
+            for (itemID, perItemError) in partials.prefix(5) {
+                let inner = perItemError as NSError
+                let innerCKCode = (perItemError as? CKError)?.code ?? ckErrorCode(from: inner)
+                let innerCodeName = innerCKCode.map(ckErrorCodeName) ?? "(non-CK)"
+                lines.append("  • \(itemID): \(innerCodeName) — \(inner.localizedDescription)")
+            }
+        }
+
+        // Surface any non-standard userInfo keys at the top level
+        // — NSPersistentCloudKitContainer sometimes attaches
+        // `NSPersistentCloudKitContainerEventErrorKey` or the
+        // specific `CKErrorRetryAfter` interval, which are useful
+        // for triage. Skip the well-known keys we've already
+        // covered to avoid noise.
+        let knownKeys: Set<String> = [
+            NSLocalizedDescriptionKey,
+            NSLocalizedFailureReasonErrorKey,
+            NSUnderlyingErrorKey,
+            "NSLocalizedRecoverySuggestion",
+            "CKErrorDescription"
+        ]
+        let extra = nsError.userInfo.filter { !knownKeys.contains($0.key) }
+        if !extra.isEmpty {
+            let summary = extra.keys.sorted().prefix(8).joined(separator: ", ")
+            lines.append("userInfo keys: \(summary)")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    /// Extract a `CKError.Code` from an `NSError` that's already in
+    /// `CKErrorDomain` but didn't bridge to `CKError` (happens with
+    /// some chained-error situations where the bridge picks the
+    /// outer Cocoa shell instead).
+    nonisolated private static func ckErrorCode(from nsError: NSError) -> CKError.Code? {
+        guard nsError.domain == CKErrorDomain else { return nil }
+        return CKError.Code(rawValue: nsError.code)
     }
 
     /// Map a `CKError.Code` raw value to the case name. Apple

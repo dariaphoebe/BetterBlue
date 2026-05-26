@@ -127,6 +127,50 @@ class AppSettings {
         }
     }
 
+    // MARK: - Live cross-process reads
+    //
+    // `AppSettings.shared` is a process-lifetime singleton — its
+    // stored properties are populated ONCE at first access and
+    // never re-read from UserDefaults. That's fine for the main
+    // app (any change goes through `didSet` in the same process)
+    // but breaks widget / Live Activity / App Intent extensions:
+    // those run in a separate process that iOS keeps alive across
+    // multiple timeline reloads, so their in-memory copy of
+    // `preferredDistanceUnit` stays at whatever it was when the
+    // extension process first launched. Even after the main app
+    // wrote the new value to App Group UserDefaults, the widget
+    // process's singleton kept returning the old one.
+    //
+    // The two `live*` accessors below skip the singleton and read
+    // App Group UserDefaults directly each time, so extensions
+    // always reflect the latest setting on their next reload.
+
+    nonisolated private static let appGroupSuiteName = "group.com.betterblue.shared"
+    nonisolated private static let distanceUnitKey = "DistanceUnit"
+    nonisolated private static let temperatureUnitKey = "TemperatureUnit"
+
+    // `nonisolated` because UserDefaults reads are thread-safe and
+    // these callers (widget timeline provider, intent perform
+    // methods) are explicitly NOT on the main actor. The enclosing
+    // type is @MainActor for the Observable property storage.
+    nonisolated static func liveDistanceUnit() -> Distance.Units {
+        guard let defaults = UserDefaults(suiteName: appGroupSuiteName),
+              let raw = defaults.string(forKey: distanceUnitKey),
+              let unit = Distance.Units(rawValue: raw) else {
+            return .miles
+        }
+        return unit
+    }
+
+    nonisolated static func liveTemperatureUnit() -> Temperature.Units {
+        guard let defaults = UserDefaults(suiteName: appGroupSuiteName),
+              let raw = defaults.string(forKey: temperatureUnitKey),
+              let unit = Temperature.Units(rawValue: raw) else {
+            return .fahrenheit
+        }
+        return unit
+    }
+
     var notificationsEnabled: Bool {
         didSet {
             userDefaults.set(notificationsEnabled, forKey: notificationsEnabledKey)
@@ -167,14 +211,24 @@ class AppSettings {
             syncStore = NSUbiquitousKeyValueStore.default
         #endif
 
-        // Initialize unit preferences from sync store (iCloud on device, shared file in simulator)
-        let savedDistanceUnit = syncStore.string(forKey: distanceUnitKey)
-            ?? userDefaults.string(forKey: distanceUnitKey)
+        // Read App Group UserDefaults FIRST, iCloud second. The
+        // widget extension is a separate process from the main app,
+        // and `NSUbiquitousKeyValueStore` keeps its own per-process
+        // local cache that lags behind the main app's writes until
+        // iCloud delivers a change notification. App Group
+        // UserDefaults, by contrast, is shared synchronously across
+        // processes on the same device — writes from the main app
+        // are immediately visible to the widget. iCloud remains the
+        // cross-device source (picked up below in `handleiCloudChange`),
+        // but UserDefaults is the source of truth for "what this
+        // device's main app last saved."
+        let savedDistanceUnit = userDefaults.string(forKey: distanceUnitKey)
+            ?? syncStore.string(forKey: distanceUnitKey)
             ?? Distance.Units.miles.rawValue
         preferredDistanceUnit = Distance.Units(rawValue: savedDistanceUnit) ?? .miles
 
-        let savedTemperatureUnit = syncStore.string(forKey: temperatureUnitKey)
-            ?? userDefaults.string(forKey: temperatureUnitKey)
+        let savedTemperatureUnit = userDefaults.string(forKey: temperatureUnitKey)
+            ?? syncStore.string(forKey: temperatureUnitKey)
             ?? Temperature.Units.fahrenheit.rawValue
         preferredTemperatureUnit = Temperature.Units(rawValue: savedTemperatureUnit) ?? .fahrenheit
 
@@ -223,7 +277,14 @@ class AppSettings {
     private func handleiCloudChange(changeReason: Int, changedKeys: [String]) {
         BBLogger.info(.app, "iCloud settings changed externally (reason: \(changeReason)): \(changedKeys)")
 
-        // Update stored properties from iCloud values (triggers observation for SwiftUI)
+        // Update stored properties from iCloud values. The didSet
+        // observers on `preferredDistanceUnit` /
+        // `preferredTemperatureUnit` will re-write to App Group
+        // UserDefaults as a side effect — ensuring the local
+        // widget extension picks up cross-device changes too. If
+        // we updated only the in-memory value, the widget process
+        // would still read the old UserDefaults value on its next
+        // timeline reload.
         if changedKeys.contains(distanceUnitKey),
            let value = syncStore.string(forKey: distanceUnitKey),
            let unit = Distance.Units(rawValue: value),
