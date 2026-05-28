@@ -169,10 +169,15 @@ final class CloudKitSyncMonitor {
         // 134419 ("The operation couldn't be completed") is a
         // canonical example. We surface every level so the user's
         // diagnostic share contains the real cause, not just the
-        // outermost generic wrapper.
+        // outermost generic wrapper. At EACH level we also pull the
+        // partial-failure breakdown, since a top-level
+        // `CKErrorDomain 2` (partialFailure) that didn't bridge to
+        // `CKError` is exactly where the per-record reasons hide.
         var current: NSError? = nsError
         var depth = 0
-        while let next = current?.userInfo[NSUnderlyingErrorKey] as? NSError, depth < 6 {
+        while let level = current {
+            lines.append(contentsOf: partialFailureLines(from: level, indent: depth))
+            guard let next = level.userInfo[NSUnderlyingErrorKey] as? NSError, depth < 6 else { break }
             depth += 1
             let indent = String(repeating: "  ", count: depth)
             if let ckCode = (next as? CKError)?.code ?? ckErrorCode(from: next) {
@@ -181,23 +186,6 @@ final class CloudKitSyncMonitor {
                 lines.append("\(indent)↳ \(next.domain) \(next.code): \(next.localizedDescription)")
             }
             current = next
-        }
-
-        // CKError-specific: partial-failure breakdown. Apple stashes
-        // per-record errors under `partialErrorsByItemID` and that
-        // map is the difference between "I don't know what failed"
-        // and "this specific zone is broken." Cap at 5 so a sync
-        // with hundreds of bad records doesn't render an unreadable
-        // wall of text in the share export.
-        if let ckError = error as? CKError,
-           let partials = ckError.partialErrorsByItemID, !partials.isEmpty {
-            lines.append("Partial failures (\(partials.count) total, showing first 5):")
-            for (itemID, perItemError) in partials.prefix(5) {
-                let inner = perItemError as NSError
-                let innerCKCode = (perItemError as? CKError)?.code ?? ckErrorCode(from: inner)
-                let innerCodeName = innerCKCode.map(ckErrorCodeName) ?? "(non-CK)"
-                lines.append("  • \(itemID): \(innerCodeName) — \(inner.localizedDescription)")
-            }
         }
 
         // Surface any non-standard userInfo keys at the top level
@@ -229,6 +217,34 @@ final class CloudKitSyncMonitor {
     nonisolated private static func ckErrorCode(from nsError: NSError) -> CKError.Code? {
         guard nsError.domain == CKErrorDomain else { return nil }
         return CKError.Code(rawValue: nsError.code)
+    }
+
+    /// Pull the per-record partial-failure breakdown straight out of
+    /// `userInfo[CKPartialErrorsByItemIDKey]`. We read the key
+    /// directly rather than via `CKError.partialErrorsByItemID`
+    /// because the error SwiftData hands us is often a plain
+    /// `NSError` in `CKErrorDomain` that doesn't bridge to `CKError`
+    /// — in which case the convenience accessor is unreachable and
+    /// the breakdown (the actual reason a `partialFailure` happened
+    /// — e.g. a record rejected because the production CloudKit
+    /// schema is missing a field) silently disappears.
+    ///
+    /// Capped at 5 entries so a sync with hundreds of bad records
+    /// doesn't render an unreadable wall of text.
+    nonisolated private static func partialFailureLines(from nsError: NSError, indent depth: Int) -> [String] {
+        guard let partials = nsError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error],
+              !partials.isEmpty else {
+            return []
+        }
+        let pad = String(repeating: "  ", count: depth)
+        var lines = ["\(pad)Partial failures (\(partials.count) total, showing first 5):"]
+        for (itemID, perItemError) in partials.prefix(5) {
+            let inner = perItemError as NSError
+            let innerCKCode = (perItemError as? CKError)?.code ?? ckErrorCode(from: inner)
+            let innerCodeName = innerCKCode.map(ckErrorCodeName) ?? "(non-CK)"
+            lines.append("\(pad)  • \(itemID): \(innerCodeName) — \(inner.localizedDescription)")
+        }
+        return lines
     }
 
     /// Map a `CKError.Code` raw value to the case name. Apple
