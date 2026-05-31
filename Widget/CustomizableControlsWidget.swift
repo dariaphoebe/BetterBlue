@@ -549,29 +549,41 @@ private struct ControlsCircleButton: View {
 
     private var iconSize: CGFloat { diameter * 0.42 }
 
+    /// The icon to draw. A preset-specific start-climate action carries
+    /// the preset's own icon; the generic "Start Climate" resolves to
+    /// the vehicle's selected-preset icon so it matches what it'll run.
+    private var displayIcon: String {
+        if action.kind == .startClimate, action.presetId == nil {
+            return vehicle.selectedPreset?.presetIcon ?? action.iconName
+        }
+        return action.iconName
+    }
+
     var body: some View {
         if action.kind == .none {
-            Circle()
-                .fill(Color.white.opacity(0.12))
-                .overlay(
-                    Image(systemName: action.iconName)
-                        .font(.system(size: iconSize, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.4))
-                )
+            // Empty slot: render nothing, but reserve the space so the
+            // remaining buttons keep their positions.
+            Color.clear
                 .frame(width: diameter, height: diameter)
         } else if let intent = makeIntent() {
             Button(intent: intent) {
-                Image(systemName: action.iconName)
-                    .font(.system(size: iconSize, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: diameter, height: diameter)
-                    .background(
-                        Circle().fill(action.kind.color(for: vehicle).opacity(0.9))
-                    )
-                    .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 0.5))
+                buttonLabel
             }
             .buttonStyle(.plain)
         }
+    }
+
+    /// Matches the in-app quick-action buttons (`CircularIconLabel`):
+    /// a faint tinted circle with the icon drawn in the solid tint.
+    private var buttonLabel: some View {
+        let tint = action.kind.color(for: vehicle)
+        return ZStack {
+            Circle().fill(tint.opacity(0.18))
+            Image(systemName: displayIcon)
+                .font(.system(size: iconSize, weight: .semibold))
+                .foregroundStyle(tint)
+        }
+        .frame(width: diameter, height: diameter)
     }
 
     /// Maps the configured action onto its concrete control intent,
