@@ -419,16 +419,16 @@ struct ControlsWidgetView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    /// 4×2: title + timestamp stacked at top-left with the buttons
-    /// centered in the space below; the range wheel (and charging
-    /// details) occupy the right column.
+    /// 4×2: info row on top — title + timestamp left-aligned, range
+    /// wheel (with charging details) on the right — and the buttons
+    /// filling the full width underneath.
     private func mediumLayout(vehicle: VehicleEntity) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 12) {
                 ControlsHeaderView(vehicle: vehicle, isSmall: false)
-                ControlsButtonRow(vehicle: vehicle, actions: visibleActions)
+                ControlsRangeColumn(vehicle: vehicle)
             }
-            ControlsRangeColumn(vehicle: vehicle)
+            ControlsButtonRow(vehicle: vehicle, actions: visibleActions)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -467,19 +467,19 @@ private struct ControlsRangeColumn: View {
     }
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 3) {
             ZStack {
                 Circle()
-                    .stroke(textColor.opacity(0.25), lineWidth: 5)
+                    .stroke(textColor.opacity(0.25), lineWidth: 4)
                 Circle()
                     .trim(from: 0, to: fillFraction)
-                    .stroke(tint, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .stroke(tint, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 Image(systemName: vehicle.fuelType.hasElectricCapability ? "bolt.fill" : "fuelpump.fill")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(tint)
             }
-            .frame(width: 56, height: 56)
+            .frame(width: 42, height: 42)
             .padding(.top, 2)
 
             if let detailText {
@@ -490,7 +490,6 @@ private struct ControlsRangeColumn: View {
                     .minimumScaleFactor(0.8)
             }
         }
-        .frame(maxHeight: .infinity, alignment: .center)
     }
 }
 
