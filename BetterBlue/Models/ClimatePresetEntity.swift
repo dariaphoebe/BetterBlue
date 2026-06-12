@@ -27,12 +27,44 @@ struct ClimatePresetQuery: EntityQuery {
     func suggestedEntities() async throws -> [ClimatePresetEntity] {
         return await ClimatePresetFetcher.fetchAllPresets()
     }
+
+    /// Pre-fills preset parameters (e.g. the Start Climate control)
+    /// with the primary vehicle's selected preset instead of an empty
+    /// placeholder, so an unconfigured control works out of the box.
+    /// Falls back to any preset of the primary vehicle, then to the
+    /// first preset overall.
+    func defaultResult() async -> ClimatePresetEntity? {
+        let all = await ClimatePresetFetcher.fetchAllPresets()
+        guard let primaryVin = await ClimatePresetFetcher.primaryVehicleVin() else {
+            return all.first(where: \.isSelected) ?? all.first
+        }
+        let forVehicle = all.filter { $0.vehicleVin == primaryVin }
+        return forVehicle.first(where: \.isSelected) ?? forVehicle.first ?? all.first
+    }
 }
 
 @MainActor
 private struct ClimatePresetFetcher {
     static func fetchAllPresets() -> [ClimatePresetEntity] {
         return fetchPresets(withIDs: nil)
+    }
+
+    /// VIN of the user's primary vehicle — first non-hidden by sort
+    /// order, mirroring `VehicleQuery.defaultResult()` (which lives in
+    /// the widget target and isn't visible from the main app target).
+    static func primaryVehicleVin() -> String? {
+        do {
+            let modelContainer = try createSharedModelContainer(enableCloudKit: false)
+            let context = ModelContext(modelContainer)
+            let descriptor = FetchDescriptor<BBVehicle>(
+                predicate: #Predicate { !$0.isHidden },
+                sortBy: [SortDescriptor(\.sortOrder)]
+            )
+            return try context.fetch(descriptor).first { $0.account != nil }?.vin
+        } catch {
+            BBLogger.error(.app, "Failed to fetch primary vehicle: \(error)")
+            return nil
+        }
     }
 
     static func fetchPresets(withIDs ids: [UUID]?) -> [ClimatePresetEntity] {

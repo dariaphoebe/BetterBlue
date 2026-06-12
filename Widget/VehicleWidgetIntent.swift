@@ -392,4 +392,16 @@ struct VehicleQuery: EntityQuery {
             return vehicles.map { VehicleEntity(from: $0, with: unit, allPresets: presets) }
         }
     }
+
+    /// Pre-fills every vehicle parameter (widgets, Control Center
+    /// controls, Shortcuts) with the user's primary vehicle — the first
+    /// non-hidden one by sort order — instead of an empty "Vehicle"
+    /// placeholder. With a single vehicle it is therefore always the
+    /// default; with several, the user picks the default by reordering
+    /// vehicles in Settings. Without this, an unconfigured control run
+    /// from Spotlight/Control Center just errors with "edit this
+    /// control and select a vehicle".
+    func defaultResult() async -> VehicleEntity? {
+        try? await suggestedEntities().first
+    }
 }

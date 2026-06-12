@@ -172,6 +172,26 @@ struct WidgetActionQuery: EntityQuery {
     }
 }
 
+/// Per-slot options provider whose only job beyond listing the shared
+/// options is supplying a slot-specific `defaultResult()`. The entity's
+/// `defaultQuery` can only provide ONE default for every parameter of
+/// the type, but each button slot wants a different pre-fill (Lock,
+/// Unlock, …) — and `defaultResult` is also what the widget's Edit
+/// screen displays, so without it the slots read as bare "Button 2" /
+/// "Button 3" placeholders even though the widget renders defaults.
+struct WidgetActionOptionsProvider: DynamicOptionsProvider {
+    let defaultKind: WidgetActionKind
+
+    func results() async throws -> [WidgetActionEntity] {
+        let presets = (try? await ClimatePresetEntity.defaultQuery.suggestedEntities()) ?? []
+        return WidgetActionEntity.allOptions(presets: presets)
+    }
+
+    func defaultResult() async -> WidgetActionEntity? {
+        .fixed(defaultKind)
+    }
+}
+
 // MARK: - Configuration intents
 
 /// Shared surface the timeline provider + views read, so a single
@@ -190,10 +210,10 @@ struct CustomControls2x2ConfigIntent: WidgetConfigurationIntent, ControlsConfigI
     @Parameter(title: "Vehicle")
     var vehicle: VehicleEntity?
 
-    @Parameter(title: "Button 1")
+    @Parameter(title: "Button 1", optionsProvider: WidgetActionOptionsProvider(defaultKind: .lock))
     var action1: WidgetActionEntity?
 
-    @Parameter(title: "Button 2")
+    @Parameter(title: "Button 2", optionsProvider: WidgetActionOptionsProvider(defaultKind: .startClimate))
     var action2: WidgetActionEntity?
 
     init() {
@@ -213,16 +233,16 @@ struct CustomControls4x2ConfigIntent: WidgetConfigurationIntent, ControlsConfigI
     @Parameter(title: "Vehicle")
     var vehicle: VehicleEntity?
 
-    @Parameter(title: "Button 1")
+    @Parameter(title: "Button 1", optionsProvider: WidgetActionOptionsProvider(defaultKind: .lock))
     var action1: WidgetActionEntity?
 
-    @Parameter(title: "Button 2")
+    @Parameter(title: "Button 2", optionsProvider: WidgetActionOptionsProvider(defaultKind: .unlock))
     var action2: WidgetActionEntity?
 
-    @Parameter(title: "Button 3")
+    @Parameter(title: "Button 3", optionsProvider: WidgetActionOptionsProvider(defaultKind: .startClimate))
     var action3: WidgetActionEntity?
 
-    @Parameter(title: "Button 4")
+    @Parameter(title: "Button 4", optionsProvider: WidgetActionOptionsProvider(defaultKind: .stopClimate))
     var action4: WidgetActionEntity?
 
     init() {
