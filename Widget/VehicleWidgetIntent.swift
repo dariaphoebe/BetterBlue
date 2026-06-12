@@ -14,7 +14,7 @@ import WidgetKit
 struct VehicleWidgetIntent: WidgetConfigurationIntent {
     static var title: LocalizedStringResource =
         "Vehicle Widget Configuration"
-    static var description = IntentDescription("Choose a vehicle for the widget")
+    static var description = IntentDescription("Choose a vehicle and buttons for the widget")
 
     @Parameter(
         title: "Vehicle",
@@ -22,11 +22,213 @@ struct VehicleWidgetIntent: WidgetConfigurationIntent {
     )
     var vehicle: VehicleEntity?
 
+    // Configurable button slots. Optional so widgets configured before
+    // these parameters existed keep working — `slotActions` falls back
+    // to the classic Lock/Unlock/Start/Stop set when nothing is set.
+    @Parameter(title: "Button 1", optionsProvider: WidgetActionOptionsProvider(defaultKind: .lock))
+    var action1: WidgetActionEntity?
+
+    @Parameter(title: "Button 2", optionsProvider: WidgetActionOptionsProvider(defaultKind: .unlock))
+    var action2: WidgetActionEntity?
+
+    @Parameter(title: "Button 3", optionsProvider: WidgetActionOptionsProvider(defaultKind: .startClimate))
+    var action3: WidgetActionEntity?
+
+    @Parameter(title: "Button 4", optionsProvider: WidgetActionOptionsProvider(defaultKind: .stopClimate))
+    var action4: WidgetActionEntity?
+
     init(vehicle: VehicleEntity?) {
         self.vehicle = vehicle
     }
 
-    init() {}
+    init() {
+        action1 = .lock
+        action2 = .unlock
+        action3 = .startClimate
+        action4 = .stopClimate
+    }
+
+    /// The actions to render, in slot order. Empty ("None") slots are
+    /// dropped — the remaining buttons re-flow into the grid. A widget
+    /// with no slot configured at all (added before this feature, or
+    /// never edited) gets the classic four buttons.
+    var slotActions: [WidgetActionEntity] {
+        let slots = [action1, action2, action3, action4]
+        if slots.allSatisfy({ $0 == nil }) {
+            return [.lock, .unlock, .startClimate, .stopClimate]
+        }
+        return slots.compactMap { $0 }.filter { $0.kind != .none }
+    }
+}
+
+// MARK: - Configurable button actions
+
+/// The command a single configurable button performs. `startClimate`
+/// covers both the generic "selected preset" case (presetId == nil) and a
+/// specific preset (presetId set) — see `WidgetActionEntity`.
+enum WidgetActionKind: String, Sendable {
+    case lock
+    case unlock
+    case startClimate
+    case stopClimate
+    case startCharge
+    case stopCharge
+    case none
+
+    var defaultTitle: String {
+        switch self {
+        case .lock: "Lock"
+        case .unlock: "Unlock"
+        case .startClimate: "Start Climate"
+        case .stopClimate: "Stop Climate"
+        case .startCharge: "Start Charge"
+        case .stopCharge: "Stop Charge"
+        case .none: "None"
+        }
+    }
+
+    /// Icons match the original widget's button set (`fan`/`fan.slash`
+    /// rather than the filled variants) so the design stays unchanged.
+    var icon: String {
+        switch self {
+        case .lock: "lock.fill"
+        case .unlock: "lock.open.fill"
+        case .startClimate: "fan"
+        case .stopClimate: "fan.slash"
+        case .startCharge: "bolt.fill"
+        case .stopCharge: "bolt.slash.fill"
+        case .none: "circle.dashed"
+        }
+    }
+
+    /// Resolves the per-vehicle custom color this action should use.
+    func color(for vehicle: VehicleEntity) -> Color {
+        switch self {
+        case .lock: vehicle.lockColor
+        case .unlock: vehicle.unlockColor
+        case .startClimate: vehicle.startClimateColor
+        case .stopClimate: vehicle.stopColor
+        case .startCharge: vehicle.chargingColor
+        case .stopCharge: vehicle.stopColor
+        case .none: Color.gray
+        }
+    }
+}
+
+/// One selectable option in a button slot. Modeled as an `AppEntity`
+/// (rather than a static `AppEnum`) so the picker can offer dynamic
+/// options — specifically, one "Start Climate – <Preset>" entry per
+/// climate preset the user has created.
+struct WidgetActionEntity: AppEntity, Identifiable, Sendable {
+    /// Stable identifier. Fixed actions use their kind raw value
+    /// ("lock", "startClimate", …); preset-specific start-climate
+    /// actions use "preset:<presetId>".
+    var id: String
+    var kindRaw: String
+    var title: String
+    var iconName: String
+
+    // Populated only for a preset-specific start-climate action.
+    var presetId: UUID?
+    var presetVin: String?
+    var presetVehicleName: String?
+    var presetName: String?
+    var presetIcon: String?
+
+    var kind: WidgetActionKind { WidgetActionKind(rawValue: kindRaw) ?? .none }
+
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Vehicle Action"
+    static let defaultQuery = WidgetActionQuery()
+
+    var displayRepresentation: DisplayRepresentation {
+        if let presetVehicleName, presetId != nil {
+            return DisplayRepresentation(
+                title: "\(title)",
+                subtitle: LocalizedStringResource(stringLiteral: presetVehicleName),
+                image: .init(systemName: iconName)
+            )
+        }
+        return DisplayRepresentation(title: "\(title)", image: .init(systemName: iconName))
+    }
+
+    // MARK: Fixed-action factories
+
+    static func fixed(_ kind: WidgetActionKind) -> WidgetActionEntity {
+        WidgetActionEntity(
+            id: kind.rawValue,
+            kindRaw: kind.rawValue,
+            title: kind.defaultTitle,
+            iconName: kind.icon
+        )
+    }
+
+    static var lock: WidgetActionEntity { fixed(.lock) }
+    static var unlock: WidgetActionEntity { fixed(.unlock) }
+    static var startClimate: WidgetActionEntity { fixed(.startClimate) }
+    static var stopClimate: WidgetActionEntity { fixed(.stopClimate) }
+    static var none: WidgetActionEntity { fixed(.none) }
+
+    /// Builds the full option list: the fixed commands plus one
+    /// start-climate entry per known preset.
+    static func allOptions(presets: [ClimatePresetEntity]) -> [WidgetActionEntity] {
+        var options: [WidgetActionEntity] = [
+            .lock,
+            .unlock,
+            .startClimate,
+            .stopClimate,
+            .fixed(.startCharge),
+            .fixed(.stopCharge)
+        ]
+        for preset in presets {
+            options.append(WidgetActionEntity(
+                id: "preset:\(preset.id.uuidString)",
+                kindRaw: WidgetActionKind.startClimate.rawValue,
+                title: "Start Climate – \(preset.presetName)",
+                iconName: preset.presetIcon,
+                presetId: preset.id,
+                presetVin: preset.vehicleVin,
+                presetVehicleName: preset.vehicleName,
+                presetName: preset.presetName,
+                presetIcon: preset.presetIcon
+            ))
+        }
+        options.append(.none)
+        return options
+    }
+}
+
+struct WidgetActionQuery: EntityQuery {
+    func entities(for identifiers: [WidgetActionEntity.ID]) async throws -> [WidgetActionEntity] {
+        let presets = (try? await ClimatePresetEntity.defaultQuery.suggestedEntities()) ?? []
+        let all = WidgetActionEntity.allOptions(presets: presets)
+        // Preserve the caller's requested ordering.
+        return identifiers.compactMap { id in all.first { $0.id == id } }
+    }
+
+    func suggestedEntities() async throws -> [WidgetActionEntity] {
+        let presets = (try? await ClimatePresetEntity.defaultQuery.suggestedEntities()) ?? []
+        return WidgetActionEntity.allOptions(presets: presets)
+    }
+}
+
+/// Per-slot options provider whose only job beyond listing the shared
+/// options is supplying a slot-specific `defaultResult()`. The entity's
+/// `defaultQuery` can only provide ONE default for every parameter of
+/// the type, but each button slot wants a different pre-fill (Lock,
+/// Unlock, …) — and `defaultResult` is also what the widget's Edit
+/// screen displays, so without it the slots read as bare "Button 2" /
+/// "Button 3" placeholders even though the widget renders defaults.
+struct WidgetActionOptionsProvider: DynamicOptionsProvider {
+    let defaultKind: WidgetActionKind
+
+    func results() async throws -> [WidgetActionEntity] {
+        let presets = (try? await ClimatePresetEntity.defaultQuery.suggestedEntities()) ?? []
+        return WidgetActionEntity.allOptions(presets: presets)
+    }
+
+    func defaultResult() async -> WidgetActionEntity? {
+        .fixed(defaultKind)
+    }
 }
 
 struct VehicleEntity: AppEntity {

@@ -15,7 +15,7 @@ struct VehicleWidgetEntryView: View {
 
     var body: some View {
         if let vehicle = entry.vehicle {
-            VehicleControlsWidget(vehicle: vehicle)
+            VehicleControlsWidget(vehicle: vehicle, actions: entry.configuration.slotActions)
                 .containerBackground(for: .widget) {
                     LinearGradient(
                         gradient: Gradient(colors: vehicle.backgroundGradient),
@@ -43,15 +43,16 @@ struct VehicleWidgetEntryView: View {
 
 struct VehicleControlsWidget: View {
     let vehicle: VehicleEntity
+    let actions: [WidgetActionEntity]
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
         Link(destination: URL(string: "betterblue://vehicle/\(vehicle.vin)")!) {
             switch family {
             case .systemSmall:
-                VehicleSmallWidget(vehicle: vehicle)
+                VehicleSmallWidget(vehicle: vehicle, actions: actions)
             default:
-                VehicleMediumWidget(vehicle: vehicle)
+                VehicleMediumWidget(vehicle: vehicle, actions: actions)
             }
         }
     }
@@ -59,9 +60,10 @@ struct VehicleControlsWidget: View {
 
 struct VehicleMediumWidget: View {
     let vehicle: VehicleEntity
+    let actions: [WidgetActionEntity]
 
     var body: some View {
-        UnifiedVehicleWidget(vehicle: vehicle, isSmall: false)
+        UnifiedVehicleWidget(vehicle: vehicle, actions: actions, isSmall: false)
     }
 }
 
@@ -83,15 +85,17 @@ struct WidgetButtonStyle: ButtonStyle {
 
 struct VehicleSmallWidget: View {
     let vehicle: VehicleEntity
+    let actions: [WidgetActionEntity]
 
     var body: some View {
-        UnifiedVehicleWidget(vehicle: vehicle, isSmall: true)
+        UnifiedVehicleWidget(vehicle: vehicle, actions: actions, isSmall: true)
     }
 }
 
 // Unified widget components
 struct UnifiedVehicleWidget: View {
     let vehicle: VehicleEntity
+    let actions: [WidgetActionEntity]
     let isSmall: Bool
 
     var body: some View {
@@ -100,7 +104,7 @@ struct UnifiedVehicleWidget: View {
             VehicleHeaderView(vehicle: vehicle, isSmall: isSmall)
 
             // Action buttons
-            VehicleButtonsView(vehicle: vehicle, isSmall: isSmall)
+            VehicleButtonsView(vehicle: vehicle, actions: actions, isSmall: isSmall)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 16)
@@ -136,11 +140,18 @@ struct VehicleHeaderView: View {
 
     var body: some View {
         HStack {
-            Text(vehicle.displayName)
-                .font(isSmall ? .caption : .headline)
-                .fontWeight(.bold)
-                .foregroundColor(textColor)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(vehicle.displayName)
+                    .font(isSmall ? .caption : .headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(textColor)
+                    .lineLimit(1)
+
+                Text(updatedText)
+                    .font(.caption2)
+                    .foregroundColor(textColor.opacity(0.7))
+                    .lineLimit(1)
+            }
 
             Spacer()
 
@@ -182,85 +193,124 @@ struct VehicleHeaderView: View {
         .cornerRadius(12)
         .padding(.bottom, isSmall ? 4 : 0)
     }
+
+    private var updatedText: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: vehicle.timestamp, relativeTo: Date())
+    }
 }
 
-struct VehicleButtonData {
-    let label: String
-    let shortLabel: String
-    let icon: String
-    let color: Color
-    let intent: () -> any AppIntent
+extension WidgetActionEntity {
+    /// Maps a configured action onto its concrete control intent,
+    /// targeting the widget's vehicle (or, for a preset-specific
+    /// action, the preset's own vehicle). Lives here — not next to the
+    /// entity — because the control intents are iOS-only while the
+    /// entity is shared with the watch widget target.
+    func makeIntent(for vehicle: VehicleEntity) -> (any AppIntent)? {
+        switch kind {
+        case .lock:
+            let intent = LockVehicleControlIntent()
+            intent.vehicle = vehicle
+            return intent
+        case .unlock:
+            let intent = UnlockVehicleControlIntent()
+            intent.vehicle = vehicle
+            return intent
+        case .stopClimate:
+            let intent = StopClimateControlIntent()
+            intent.vehicle = vehicle
+            return intent
+        case .startCharge:
+            let intent = StartChargeControlIntent()
+            intent.vehicle = vehicle
+            return intent
+        case .stopCharge:
+            let intent = StopChargeControlIntent()
+            intent.vehicle = vehicle
+            return intent
+        case .startClimate:
+            let intent = StartClimateControlIntent()
+            if let presetId, let presetVin {
+                intent.preset = ClimatePresetEntity(
+                    id: presetId,
+                    vehicleVin: presetVin,
+                    vehicleName: presetVehicleName ?? vehicle.displayName,
+                    presetName: presetName ?? "Climate",
+                    presetIcon: presetIcon ?? "fan",
+                    isSelected: false
+                )
+            } else {
+                intent.preset = vehicle.selectedPreset
+            }
+            return intent
+        case .none:
+            return nil
+        }
+    }
+
+    /// Icon to render on the button. A preset-specific start-climate
+    /// action carries the preset's own icon; the generic "Start
+    /// Climate" resolves to the vehicle's selected-preset icon so the
+    /// button matches what it'll actually run.
+    func displayIcon(for vehicle: VehicleEntity) -> String {
+        if kind == .startClimate, presetId == nil {
+            return vehicle.selectedPreset?.presetIcon ?? iconName
+        }
+        return iconName
+    }
 }
 
 struct VehicleButtonsView: View {
     let vehicle: VehicleEntity
+    let actions: [WidgetActionEntity]
     let isSmall: Bool
-
-    var buttonData: [VehicleButtonData] {
-        [
-            VehicleButtonData(label: "Lock", shortLabel: "Lock", icon: "lock.fill", color: vehicle.lockColor, intent: {
-                let intent = LockVehicleControlIntent()
-                intent.vehicle = vehicle
-                return intent
-            }),
-            VehicleButtonData(label: "Unlock", shortLabel: "Unlock", icon: "lock.open.fill",
-                              color: vehicle.unlockColor, intent: {
-                let intent = UnlockVehicleControlIntent()
-                intent.vehicle = vehicle
-                return intent
-            }),
-            VehicleButtonData(label: "Start Climate", shortLabel: "Start", icon: "fan",
-                              color: vehicle.startClimateColor, intent: {
-                let intent = StartClimateControlIntent()
-                intent.preset = vehicle.selectedPreset
-                return intent
-            }),
-            VehicleButtonData(label: "Stop Climate", shortLabel: "Stop", icon: "fan.slash", color: .gray, intent: {
-                let intent = StopClimateControlIntent()
-                intent.vehicle = vehicle
-                return intent
-            })
-        ]
-    }
 
     var body: some View {
         if isSmall {
-            // Small widget: 2x2 grid
+            // Small widget: 2-column grid, icons only
             LazyVGrid(columns: Array(repeating: GridItem(spacing: 4), count: 2), spacing: 4) {
-                ForEach(Array(buttonData.enumerated()), id: \.offset) { _, data in
-                    Button(intent: data.intent()) {
-                        Label(data.shortLabel, systemImage: data.icon)
-                    }
-                    .buttonStyle(WidgetButtonStyle(backgroundColor: data.color))
+                ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                    actionButton(action)
                 }
             }
             .labelStyle(.iconOnly)
             .font(.headline)
             .fontWeight(.medium)
         } else {
-            // Medium widget: 2x2 layout with full labels
+            // Medium widget: rows of two with full labels
             VStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    ForEach(Array(buttonData.prefix(2).enumerated()), id: \.offset) { _, data in
-                        Button(intent: data.intent()) {
-                            Label(data.label, systemImage: data.icon)
+                ForEach(Array(actions.chunked(into: 2).enumerated()), id: \.offset) { _, row in
+                    HStack(spacing: 6) {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, action in
+                            actionButton(action)
                         }
-                        .buttonStyle(WidgetButtonStyle(backgroundColor: data.color))
-                    }
-                }
-
-                HStack(spacing: 6) {
-                    ForEach(Array(buttonData.suffix(2).enumerated()), id: \.offset) { _, data in
-                        Button(intent: data.intent()) {
-                            Label(data.label, systemImage: data.icon)
-                        }
-                        .buttonStyle(WidgetButtonStyle(backgroundColor: data.color))
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .font(.caption)
             .fontWeight(.medium)
+        }
+    }
+
+    @ViewBuilder
+    private func actionButton(_ action: WidgetActionEntity) -> some View {
+        if let intent = action.makeIntent(for: vehicle) {
+            Button(intent: intent) {
+                Label(action.kind.defaultTitle, systemImage: action.displayIcon(for: vehicle))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .buttonStyle(WidgetButtonStyle(backgroundColor: action.kind.color(for: vehicle)))
+        }
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map {
+            Array(self[$0 ..< Swift.min($0 + size, count)])
         }
     }
 }
