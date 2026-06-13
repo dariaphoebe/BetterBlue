@@ -126,7 +126,10 @@ struct VehicleHeaderView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top) {
+        // Center-aligned so a single range line sits centered against
+        // the two-line title block; with two range lines the blocks are
+        // the same height, so centering reads the same as top-aligned.
+        HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(vehicle.displayName)
                     .font(isSmall ? .caption : .headline)
