@@ -157,10 +157,12 @@ struct VehicleHeaderView: View {
     }
 }
 
-/// Right side of the widget header. One line per fuel axis — gas
-/// vehicles get the gas line, EVs the EV line, PHEVs both (gas first,
-/// EV beneath) — plus a charging line (speed · time remaining) while
-/// the vehicle is charging.
+/// Right side of the widget header, capped at two lines:
+///   • Gas car  → one gas line.
+///   • PHEV      → both ranges (gas line + EV line); no charging line,
+///                 since both lines are already spoken for.
+///   • Pure EV   → EV line, plus a charging line (speed · time
+///                 remaining) when charging.
 struct VehicleRangeInfoView: View {
     let vehicle: VehicleEntity
     let textColor: Color
@@ -244,8 +246,12 @@ struct VehicleRangeInfoView: View {
     /// with the charging color, the time remaining keeps the default
     /// text color. Built from concatenated `Text`s so the two segments
     /// can carry different colors on one line.
+    ///
+    /// Only for pure EVs — a PHEV already fills both lines with its gas
+    /// and EV ranges, so adding a charging line would exceed the
+    /// two-line cap (`vehicle.gasRange == nil` ⇒ not a PHEV).
     private var chargingLine: Text? {
-        guard vehicle.isCharging == true else { return nil }
+        guard vehicle.isCharging == true, vehicle.gasRange == nil else { return nil }
 
         let speed: Text? = (vehicle.chargeSpeedKilowatts).flatMap { kw in
             kw > 0
