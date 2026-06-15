@@ -209,10 +209,10 @@ struct VehicleStatusColumn: View {
     let textColor: Color
     let isSmall: Bool
 
-    /// One fuel axis: its glyph, color, formatted range, and fill level.
+    /// One fuel axis: its color, formatted range, and fill level. EV
+    /// uses the charging color, gas uses the gas color.
     private struct Axis: Identifiable {
         let id: Int
-        let icon: String
         let color: Color
         let range: String
         let fraction: Double
@@ -221,16 +221,16 @@ struct VehicleStatusColumn: View {
     private var axes: [Axis] {
         var result: [Axis] = []
 
-        // EV first (matches the PHEV sketch: ⚡ then ⛽).
+        // EV first (matches the PHEV sketch: EV then gas).
         if vehicle.fuelType.hasElectricCapability, let evRange = vehicle.evRange {
             result.append(Axis(
-                id: 0, icon: "bolt.fill", color: vehicle.chargingColor,
+                id: 0, color: vehicle.chargingColor,
                 range: evRange, fraction: (vehicle.evBatteryPercentage ?? 0) / 100
             ))
         }
         if let gasRange = vehicle.gasRange {
             result.append(Axis(
-                id: 1, icon: "fuelpump.fill", color: vehicle.gasColor,
+                id: 1, color: vehicle.gasColor,
                 range: gasRange, fraction: (vehicle.gasFuelPercentage ?? 0) / 100
             ))
         }
@@ -241,7 +241,6 @@ struct VehicleStatusColumn: View {
             let isEV = vehicle.fuelType.hasElectricCapability
             result.append(Axis(
                 id: 2,
-                icon: isEV ? "bolt.fill" : "fuelpump.fill",
                 color: isEV ? vehicle.chargingColor : vehicle.gasColor,
                 range: vehicle.rangeText,
                 fraction: (vehicle.batteryPercentage ?? 0) / 100
@@ -251,13 +250,13 @@ struct VehicleStatusColumn: View {
         return result
     }
 
-    /// The top line: each axis as a colored "icon range" segment, then
-    /// lock and climate glyphs in the default text color, dot-separated.
+    /// The top line: each axis's range in its fuel color, then lock and
+    /// climate glyphs in the default text color, dot-separated. The
+    /// fuel icons are omitted — the bar color already conveys the axis.
     private var statusLine: Text {
         var line: Text?
         for axis in axes {
-            let segment = Text(Image(systemName: axis.icon)).foregroundColor(axis.color)
-                + Text(" \(axis.range)").foregroundColor(axis.color)
+            let segment = Text(axis.range).foregroundColor(axis.color)
             line = line.map { $0 + Text("  ·  ") + segment } ?? segment
         }
         var result = line ?? Text("")
