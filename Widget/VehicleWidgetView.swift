@@ -126,16 +126,16 @@ struct VehicleHeaderView: View {
     }
 
     var body: some View {
-        // Center-aligned so a single range line sits centered against
-        // the two-line title block; with two range lines the blocks are
-        // the same height, so centering reads the same as top-aligned.
-        HStack(alignment: .center) {
+        // Name + time on the left; all status (ranges, lock/climate
+        // glyphs, percentage bars) on the right.
+        HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(vehicle.displayName)
                     .font(isSmall ? .caption : .headline)
                     .fontWeight(.bold)
                     .foregroundColor(textColor)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
 
                 subtitleLine
                     .font(.caption2)
@@ -144,9 +144,10 @@ struct VehicleHeaderView: View {
                     .minimumScaleFactor(0.8)
             }
 
-            Spacer()
+            Spacer(minLength: 4)
 
-            VehicleRangeInfoView(vehicle: vehicle, textColor: textColor, isSmall: isSmall)
+            VehicleStatusColumn(vehicle: vehicle, textColor: textColor, isSmall: isSmall)
+                .frame(width: isSmall ? 96 : 168)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, isSmall ? 4 : 6)
@@ -155,33 +156,19 @@ struct VehicleHeaderView: View {
     }
 
     /// The line under the title. Normally the absolute last-updated
-    /// time followed by lock/climate status glyphs (dot-separated). When
-    /// the user has just tapped a widget button, it's replaced by
-    /// "<command> requested at <time>" until a real status refresh lands.
+    /// time (the lock/climate glyphs now live in the status column on
+    /// the right). When the user has just tapped a widget button, it's
+    /// replaced by "<command> requested at <time>" until a real status
+    /// refresh lands. Absolute (not relative) time because a widget's
+    /// text is frozen between timeline reloads — a relative "5m ago"
+    /// would silently go stale.
     @ViewBuilder
     private var subtitleLine: some View {
         if let pending = pendingCommand {
             Text("\(pending.command) requested at \(absoluteTime(pending.date))")
         } else {
-            statusLine
+            Text(absoluteUpdated)
         }
-    }
-
-    /// Absolute last-updated time + status glyphs as one concatenated
-    /// `Text` so it stays a single dot-separated line. Absolute (not
-    /// relative) because a widget's text is frozen between timeline
-    /// reloads — a relative "5m ago" would silently go stale.
-    private var statusLine: Text {
-        var line = Text(absoluteUpdated)
-        if let locked = vehicle.isLocked {
-            line = line + Text("  ·  ")
-                + Text(Image(systemName: locked ? "lock.fill" : "lock.open.fill"))
-        }
-        if let climateOn = vehicle.isClimateOn {
-            line = line + Text("  ·  ")
-                + Text(Image(systemName: climateOn ? "fan.fill" : "fan.slash"))
-        }
-        return line
     }
 
     /// The most recent widget-button command for this vehicle, but only
@@ -209,123 +196,107 @@ struct VehicleHeaderView: View {
     }
 }
 
-/// Right side of the widget header, capped at two lines:
-///   • Gas car  → one gas line.
-///   • PHEV      → both ranges (gas line + EV line); no charging line,
-///                 since both lines are already spoken for.
-///   • Pure EV   → EV line, plus a charging line (speed · time
-///                 remaining) when charging.
-struct VehicleRangeInfoView: View {
+/// Right side of the widget header: a single range + status line on
+/// top (each fuel axis as a colored "icon range", then lock + climate
+/// glyphs, dot-separated) with a color-coded percentage bar per fuel
+/// axis beneath it.
+///   • Gas  → orange "⛽ range", one orange bar.
+///   • EV   → green "⚡ range", one green bar.
+///   • PHEV → "⚡ range · ⛽ range", a green bar then an orange bar.
+struct VehicleStatusColumn: View {
     let vehicle: VehicleEntity
     let textColor: Color
     let isSmall: Bool
 
-    private struct Line: Identifiable {
+    /// One fuel axis: its glyph, color, formatted range, and fill level.
+    private struct Axis: Identifiable {
         let id: Int
         let icon: String
-        let iconColor: Color
-        let text: String
-        let textColor: Color
+        let color: Color
+        let range: String
+        let fraction: Double
     }
 
-    private var lines: [Line] {
-        var result: [Line] = []
+    private var axes: [Axis] {
+        var result: [Axis] = []
 
-        // Gas line (gas + PHEV): icon, range, percentage — same format
-        // the widget always used.
-        if let gasRange = vehicle.gasRange {
-            var text = gasRange
-            if let percent = vehicle.gasFuelPercentage {
-                text += " · \(Int(percent))%"
-            }
-            result.append(Line(
-                id: 0, icon: "fuelpump.fill", iconColor: .orange,
-                text: text, textColor: textColor
-            ))
-        }
-
-        // EV line: the only line for pure EVs, the second line for PHEVs.
+        // EV first (matches the PHEV sketch: ⚡ then ⛽).
         if vehicle.fuelType.hasElectricCapability, let evRange = vehicle.evRange {
-            var text = evRange
-            if let percent = vehicle.evBatteryPercentage {
-                text += " · \(Int(percent))%"
-            }
-            result.append(Line(
-                id: 1, icon: "bolt.fill", iconColor: vehicle.chargingColor,
-                text: text, textColor: textColor
+            result.append(Axis(
+                id: 0, icon: "bolt.fill", color: vehicle.chargingColor,
+                range: evRange, fraction: (vehicle.evBatteryPercentage ?? 0) / 100
+            ))
+        }
+        if let gasRange = vehicle.gasRange {
+            result.append(Axis(
+                id: 1, icon: "fuelpump.fill", color: vehicle.gasColor,
+                range: gasRange, fraction: (vehicle.gasFuelPercentage ?? 0) / 100
             ))
         }
 
-        // Fallback so vehicles with no parsed range data still show the
-        // legacy rangeText instead of nothing.
+        // Fallback: a vehicle with no parsed per-axis data still shows
+        // its legacy range + battery so the column isn't empty.
         if result.isEmpty, !vehicle.rangeText.isEmpty {
-            result.append(Line(
-                id: 3,
-                icon: vehicle.fuelType.hasElectricCapability ? "bolt.fill" : "fuelpump.fill",
-                iconColor: vehicle.fuelType.hasElectricCapability ? vehicle.chargingColor : .orange,
-                text: vehicle.rangeText, textColor: textColor
+            let isEV = vehicle.fuelType.hasElectricCapability
+            result.append(Axis(
+                id: 2,
+                icon: isEV ? "bolt.fill" : "fuelpump.fill",
+                color: isEV ? vehicle.chargingColor : vehicle.gasColor,
+                range: vehicle.rangeText,
+                fraction: (vehicle.batteryPercentage ?? 0) / 100
             ))
         }
 
         return result
     }
 
-    var body: some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            ForEach(lines) { line in
-                HStack(spacing: 3) {
-                    Image(systemName: line.icon)
-                        .font(.caption2)
-                        .foregroundColor(line.iconColor)
-                    Text(line.text)
-                        .font(isSmall ? .caption2 : .caption)
-                        .foregroundColor(line.textColor)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                }
-            }
+    /// The top line: each axis as a colored "icon range" segment, then
+    /// lock and climate glyphs in the default text color, dot-separated.
+    private var statusLine: Text {
+        var line: Text?
+        for axis in axes {
+            let segment = Text(Image(systemName: axis.icon)).foregroundColor(axis.color)
+                + Text(" \(axis.range)").foregroundColor(axis.color)
+            line = line.map { $0 + Text("  ·  ") + segment } ?? segment
+        }
+        var result = line ?? Text("")
+        if let locked = vehicle.isLocked {
+            result = result + Text("  ·  ")
+                + Text(Image(systemName: locked ? "lock.fill" : "lock.open.fill"))
+                .foregroundColor(textColor)
+        }
+        if let climateOn = vehicle.isClimateOn {
+            result = result + Text("  ·  ")
+                + Text(Image(systemName: climateOn ? "fan.fill" : "fan.slash"))
+                .foregroundColor(textColor)
+        }
+        return result
+    }
 
-            if let chargingLine {
-                chargingLine
-                    .font(isSmall ? .caption2 : .caption)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            statusLine
+                .font(.caption2)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+
+            ForEach(axes) { axis in
+                percentageBar(fraction: axis.fraction, color: axis.color)
             }
         }
     }
 
-    /// Charging status while charging: no icon; the speed is tinted
-    /// with the charging color, the time remaining keeps the default
-    /// text color. Built from concatenated `Text`s so the two segments
-    /// can carry different colors on one line.
-    ///
-    /// Only for pure EVs — a PHEV already fills both lines with its gas
-    /// and EV ranges, so adding a charging line would exceed the
-    /// two-line cap (`vehicle.gasRange == nil` ⇒ not a PHEV).
-    private var chargingLine: Text? {
-        guard vehicle.isCharging == true, vehicle.gasRange == nil else { return nil }
-
-        let speed: Text? = (vehicle.chargeSpeedKilowatts).flatMap { kw in
-            kw > 0
-                ? Text(String(format: "%.1f kW", kw)).foregroundColor(vehicle.chargingColor)
-                : nil
+    private func percentageBar(fraction: Double, color: Color) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(textColor.opacity(0.22))
+                Capsule()
+                    .fill(color)
+                    .frame(width: geo.size.width * min(max(fraction, 0), 1))
+            }
         }
-        let time: Text? = (vehicle.chargeTimeRemainingMinutes).flatMap { minutes in
-            guard minutes > 0 else { return nil }
-            let formatted = minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
-            return Text(formatted).foregroundColor(textColor)
-        }
-
-        switch (speed, time) {
-        case let (.some(speed), .some(time)):
-            return speed + Text(" · ").foregroundColor(textColor.opacity(0.7)) + time
-        case let (.some(speed), nil):
-            return speed
-        case let (nil, .some(time)):
-            return time
-        case (nil, nil):
-            return Text("Charging").foregroundColor(vehicle.chargingColor)
-        }
+        .frame(height: 5)
+        .frame(maxWidth: .infinity)
     }
 }
 

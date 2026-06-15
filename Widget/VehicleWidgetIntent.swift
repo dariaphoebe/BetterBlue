@@ -395,6 +395,7 @@ struct VehicleEntity: AppEntity {
     var backgroundColorName: String
     var primaryColorName: String?
     var chargingColorName: String?
+    var gasColorName: String?
     var lockColorName: String?
     var unlockColorName: String?
     var startClimateColorName: String?
@@ -505,6 +506,7 @@ struct VehicleEntity: AppEntity {
 
     var primaryColor: Color { CustomColor.color(forName: primaryColorName, default: "blue") }
     var chargingColor: Color { CustomColor.color(forName: chargingColorName, default: "green") }
+    var gasColor: Color { CustomColor.color(forName: gasColorName, default: "orange") }
     var lockColor: Color { CustomColor.color(forName: lockColorName, default: "red") }
     var unlockColor: Color { CustomColor.color(forName: unlockColorName, default: "green") }
     var startClimateColor: Color { CustomColor.color(forName: startClimateColorName, default: "blue") }
@@ -553,6 +555,7 @@ struct VehicleEntity: AppEntity {
         backgroundColorName: String = "default",
         primaryColorName: String? = nil,
         chargingColorName: String? = nil,
+        gasColorName: String? = nil,
         lockColorName: String? = nil,
         unlockColorName: String? = nil,
         startClimateColorName: String? = nil,
@@ -570,6 +573,7 @@ struct VehicleEntity: AppEntity {
         self.backgroundColorName = backgroundColorName
         self.primaryColorName = primaryColorName
         self.chargingColorName = chargingColorName
+        self.gasColorName = gasColorName
         self.lockColorName = lockColorName
         self.unlockColorName = unlockColorName
         self.startClimateColorName = startClimateColorName
@@ -594,6 +598,7 @@ struct VehicleEntity: AppEntity {
         backgroundColorName = bbVehicle.backgroundColorName
         primaryColorName = bbVehicle.primaryColorName
         chargingColorName = bbVehicle.chargingColorName
+        gasColorName = bbVehicle.gasColorName
         lockColorName = bbVehicle.lockColorName
         unlockColorName = bbVehicle.unlockColorName
         startClimateColorName = bbVehicle.startClimateColorName
