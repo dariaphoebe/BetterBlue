@@ -127,8 +127,9 @@ struct VehicleHeaderView: View {
 
     var body: some View {
         // Name + time on the left; all status (ranges, lock/climate
-        // glyphs, percentage bars) on the right.
-        HStack(alignment: .top, spacing: 8) {
+        // glyphs, percentage bars) on the right, vertically centered
+        // against the title block.
+        HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(vehicle.displayName)
                     .font(isSmall ? .caption : .headline)
@@ -147,7 +148,7 @@ struct VehicleHeaderView: View {
             Spacer(minLength: 4)
 
             VehicleStatusColumn(vehicle: vehicle, textColor: textColor, isSmall: isSmall)
-                .frame(width: isSmall ? 96 : 168)
+                .frame(maxWidth: isSmall ? 120 : 196, alignment: .trailing)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, isSmall ? 4 : 6)
@@ -273,17 +274,27 @@ struct VehicleStatusColumn: View {
         return result
     }
 
+    // Width of the status line, measured so the bars are exactly as
+    // wide as the text above them rather than spanning the whole column.
+    @State private var lineWidth: CGFloat = 0
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {
             statusLine
-                .font(.caption2)
+                .font(isSmall ? .caption : .subheadline)
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
+                .minimumScaleFactor(0.7)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: StatusLineWidthKey.self, value: geo.size.width)
+                    }
+                )
 
             ForEach(axes) { axis in
                 percentageBar(fraction: axis.fraction, color: axis.color)
             }
         }
+        .onPreferenceChange(StatusLineWidthKey.self) { lineWidth = $0 }
     }
 
     private func percentageBar(fraction: Double, color: Color) -> some View {
@@ -295,8 +306,16 @@ struct VehicleStatusColumn: View {
                     .frame(width: geo.size.width * min(max(fraction, 0), 1))
             }
         }
-        .frame(height: 5)
-        .frame(maxWidth: .infinity)
+        .frame(width: lineWidth > 0 ? lineWidth : nil, height: 5)
+    }
+}
+
+/// Reports the measured width of the status line so its percentage bars
+/// can match it.
+private struct StatusLineWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
