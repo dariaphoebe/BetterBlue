@@ -70,6 +70,10 @@ class BBVehicle {
     var customName: String?
     var isHidden: Bool = false
     var sortOrder: Int = 0
+    /// Legacy widget background. No longer user-editable in-app (the
+    /// widget background is now set on the widget itself); retained only
+    /// so the widget's "Vehicle Setting" option and existing rows keep
+    /// resolving. New vehicles stay on "default" (adaptive on the widget).
     var backgroundColorName: String = "default"
     var watchBackgroundColorName: String = "charcoal"
     var chargePortTypeRaw: String = ChargePortType.ccs1.rawValue

@@ -99,31 +99,10 @@ struct VehicleCustomizationSection: View {
 
     var body: some View {
         Section {
-            // Widget background — kept here to consolidate all
-            // per-vehicle visual customization in one place. Same
-            // <preview> <name> ─── <value> ›  layout as the color rows
-            // so the section reads as a single visual list.
-            NavigationLink(destination: BackgroundSelectionView(bbVehicle: bbVehicle)) {
-                HStack(spacing: 12) {
-                    // Preview is a miniature widget tile: rounded square
-                    // filled with the chosen gradient, matching the
-                    // proportions used by the color-row previews.
-                    RoundedRectangle(cornerRadius: 28 * (12.0 / 52.0))
-                        .fill(LinearGradient(
-                            gradient: Gradient(colors: bbVehicle.backgroundGradient),
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing,
-                        ))
-                        .frame(width: 28, height: 28)
-                    Text("Widget Background")
-                    Spacer()
-                    Text(BBVehicle.availableBackgrounds.first(
-                        where: { $0.name == bbVehicle.backgroundColorName },
-                    )?.displayName ?? "Default")
-                        .foregroundColor(.secondary)
-                }
-            }
-
+            // The widget background is no longer set here — it's edited
+            // directly on the widget (Edit Widget → Background). The
+            // vehicle's stored `backgroundColorName` remains only as the
+            // legacy fallback the widget's "Vehicle Setting" option reads.
             colorRow(
                 title: "Primary Color",
                 selection: $bbVehicle.primaryColorName,
