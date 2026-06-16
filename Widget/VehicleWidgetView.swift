@@ -342,7 +342,7 @@ struct VehicleStatusColumn: View {
                     .foregroundColor(textColor)
             }
         }
-        .font(isSmall ? .caption2 : .caption)
+        .font(isSmall ? .caption2 : .footnote)
         .lineLimit(1)
         .minimumScaleFactor(0.7)
     }
