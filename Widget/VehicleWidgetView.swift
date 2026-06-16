@@ -268,12 +268,14 @@ struct VehicleStatusColumn: View {
     var leadingTime: String?
 
     /// One fuel axis: its color, formatted range, and fill level. EV
-    /// uses the charging color, gas uses the gas color.
+    /// uses the charging color, gas uses the gas color. The EV axis gets
+    /// the richer charging bar when plugged in (medium widget).
     private struct Axis: Identifiable {
         let id: Int
         let color: Color
         let range: String
         let fraction: Double
+        let isEV: Bool
     }
 
     private var axes: [Axis] {
@@ -283,13 +285,13 @@ struct VehicleStatusColumn: View {
         if vehicle.fuelType.hasElectricCapability, let evRange = vehicle.evRange {
             result.append(Axis(
                 id: 0, color: vehicle.chargingColor,
-                range: evRange, fraction: (vehicle.evBatteryPercentage ?? 0) / 100
+                range: evRange, fraction: (vehicle.evBatteryPercentage ?? 0) / 100, isEV: true
             ))
         }
         if let gasRange = vehicle.gasRange {
             result.append(Axis(
                 id: 1, color: vehicle.gasColor,
-                range: gasRange, fraction: (vehicle.gasFuelPercentage ?? 0) / 100
+                range: gasRange, fraction: (vehicle.gasFuelPercentage ?? 0) / 100, isEV: false
             ))
         }
 
@@ -301,7 +303,8 @@ struct VehicleStatusColumn: View {
                 id: 2,
                 color: isEV ? vehicle.chargingColor : vehicle.gasColor,
                 range: vehicle.rangeText,
-                fraction: (vehicle.batteryPercentage ?? 0) / 100
+                fraction: (vehicle.batteryPercentage ?? 0) / 100,
+                isEV: isEV
             ))
         }
 
@@ -364,7 +367,14 @@ struct VehicleStatusColumn: View {
                 )
 
             ForEach(axes) { axis in
-                percentageBar(fraction: axis.fraction, color: axis.color)
+                // While charging, the EV axis gets the app-style bar
+                // (time-remaining text + dashed target marker) on the
+                // larger widget; everything else is the thin capsule.
+                if axis.isEV, !isSmall, vehicle.isCharging == true {
+                    chargingBar(axis)
+                } else {
+                    percentageBar(fraction: axis.fraction, color: axis.color)
+                }
             }
         }
         .onPreferenceChange(StatusLineWidthKey.self) { lineWidth = $0 }
@@ -380,6 +390,51 @@ struct VehicleStatusColumn: View {
             }
         }
         .frame(width: lineWidth > 0 ? lineWidth : nil, height: 5)
+    }
+
+    /// App-style charging bar: a taller filled track with the time
+    /// remaining left-aligned inside it and a dashed vertical marker at
+    /// the target charge level — mirroring the main sheet's EV bar.
+    private func chargingBar(_ axis: Axis) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 5).fill(textColor.opacity(0.22))
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(axis.color)
+                    .frame(width: geo.size.width * min(max(axis.fraction, 0), 1))
+
+                if let target = vehicle.targetStateOfCharge, target < 100 {
+                    ChargeBarLine()
+                        .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [2, 2]))
+                        .foregroundColor(.white.opacity(0.85))
+                        .frame(width: 1.5)
+                        .offset(x: geo.size.width * (Double(target) / 100.0))
+                }
+
+                if let minutes = vehicle.chargeTimeRemainingMinutes, minutes > 0 {
+                    Text(timeRemainingString(minutes))
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
+                        .padding(.leading, 5)
+                }
+            }
+        }
+        .frame(width: lineWidth > 0 ? lineWidth : nil, height: 18)
+    }
+
+    private func timeRemainingString(_ minutes: Int) -> String {
+        minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+    }
+}
+
+/// Vertical line shape for the charging bar's target-SOC marker.
+private struct ChargeBarLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        return path
     }
 }
 
