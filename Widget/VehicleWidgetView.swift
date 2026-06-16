@@ -12,10 +12,11 @@ import WidgetKit
 
 struct VehicleWidgetEntryView: View {
     let entry: VehicleWidgetEntry
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if let vehicle = entry.vehicle {
-            let gradient = entry.configuration.effectiveGradient(for: vehicle)
+            let gradient = entry.configuration.effectiveGradient(for: vehicle, colorScheme: colorScheme)
             VehicleControlsWidget(
                 vehicle: vehicle,
                 buttons: entry.configuration.slotButtons,

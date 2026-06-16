@@ -88,12 +88,26 @@ struct VehicleWidgetIntent: WidgetConfigurationIntent {
     }
 
     /// Gradient to paint behind the widget — the override when one is
-    /// chosen, otherwise the vehicle's own background.
-    func effectiveGradient(for vehicle: VehicleEntity) -> [Color] {
-        if let background, let gradient = background.gradient {
-            return gradient
+    /// chosen, otherwise the vehicle's own background. The "Default"
+    /// background is adaptive on the widget: white in light mode, dark
+    /// glass in dark mode (the in-app Default stays its fixed light
+    /// gray).
+    func effectiveGradient(for vehicle: VehicleEntity, colorScheme: ColorScheme) -> [Color] {
+        let name = effectiveBackgroundName(for: vehicle)
+        let resolved = name == "default"
+            ? (colorScheme == .dark ? "darkGlass" : "white")
+            : name
+        return BBVehicle.availableBackgrounds.first { $0.name == resolved }?.gradient
+            ?? BBVehicle.availableBackgrounds[0].gradient
+    }
+
+    /// The catalog name of the background to paint: the override's id
+    /// when one is set, otherwise the vehicle's own background name.
+    private func effectiveBackgroundName(for vehicle: VehicleEntity) -> String {
+        if let background, background.id != "vehicle-setting" {
+            return background.id
         }
-        return vehicle.backgroundGradient
+        return vehicle.backgroundColorName
     }
 }
 
