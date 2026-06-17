@@ -157,6 +157,10 @@ struct SettingsView: View {
                         NavigationLink("Sync Diagnostics") {
                             DiagnosticInfoView()
                         }
+
+                        NavigationLink("Widget Status") {
+                            WidgetStatusDebugView()
+                        }
                     }
 
                     Button("Clear All Data") {

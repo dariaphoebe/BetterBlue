@@ -176,6 +176,7 @@
 				Utility/VehicleUtility.swift,
 				Utility/ViewExtensions.swift,
 				Views/Components/EVChargingProgressView.swift,
+				Views/Components/VehicleStatusSection.swift,
 			);
 			target = ED7054842E61F57000CA7926 /* WidgetExtension */;
 		};
