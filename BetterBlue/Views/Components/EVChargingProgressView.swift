@@ -100,83 +100,58 @@ struct EVChargingProgressView: View {
                 // Foreground progress
                 RoundedRectangle(cornerRadius: 8)
                     .fill(chargingColor)
-                    .frame(
-                        width: geometry.size.width * (Double(batteryPercentage) / 100.0),
-                        height: 32
-                    )
+                    .frame(width: fillWidth(geometry.size.width), height: 32)
 
-                // Target SOC indicator — a curved "v" from the top edge
-                // and "^" from the bottom edge pointing at the limit,
-                // clipped to the bar so it doesn't spill past the rounded
-                // edge near 99%. Hidden at 100%.
+                // Target SOC indicator — filled "valley"/"mountain"
+                // half-discs pointing at the limit, clipped to the bar so
+                // it doesn't spill past the rounded edge near 99%. Hidden
+                // at 100%.
                 if let targetSOC, targetSOC < 100 {
                     ChargeTargetMarker(
                         centerX: geometry.size.width * (targetSOC / 100.0),
-                        halfWidth: 7,
-                        reach: 8
+                        radius: 8
                     )
-                    .stroke(
-                        Color.white.opacity(0.85),
-                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
-                    )
+                    .fill(Color.white)
+                    .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
                     .frame(height: 32)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
 
-                // Charge speed on the left (when provided).
-                HStack {
-                    if let speed = chargeSpeed {
-                        Text(speed)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
-                            .padding(.leading, 12)
-                    }
-                    Spacer()
-                }
-                .frame(height: 32)
-
-                // Time remaining. When the caller passed a charge
-                // speed, time goes on the right within the target-SOC
-                // area (Live Activity layout). When speed is hidden
-                // (main sheet's EV row — the speed already shows on
-                // the charging label), time moves to the LEFT so the
-                // bar isn't entirely empty on that side.
+                // Time remaining (left), charge speed (right) — same
+                // fill-aware placement as the widget so each label sits
+                // over the green fill or the gray remainder rather than
+                // straddling the boundary.
                 if let timeRemaining = chargeTimeRemaining {
-                    if chargeSpeed != nil {
-                        HStack {
-                            Spacer()
-                            Text(timeRemaining)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-                                .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
-                                .padding(.trailing, 12)
-                        }
+                    Text(timeRemaining)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                        .padding(.leading, 12)
+                        .offset(x: fillFraction > 0.25 ? 0 : fillWidth(geometry.size.width))
+                }
+
+                if let speed = chargeSpeed {
+                    Text(speed)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                        .padding(.trailing, 12)
                         .frame(
-                            width: targetSOC != nil
-                                ? geometry.size.width * ((targetSOC ?? 100) / 100.0)
-                                : geometry.size.width,
-                            height: 32
+                            width: fillFraction < 0.8 ? geometry.size.width : fillWidth(geometry.size.width),
+                            alignment: .trailing
                         )
-                    } else {
-                        HStack {
-                            Text(timeRemaining)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-                                .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
-                                .padding(.leading, 12)
-                            Spacer()
-                        }
-                        .frame(height: 32)
-                    }
                 }
             }
         }
         .frame(height: 32)
     }
+
+    /// Battery fill as a 0...1 fraction and its pixel width — used to
+    /// keep the inline labels off the fill/gray boundary.
+    private var fillFraction: Double { min(max(Double(batteryPercentage) / 100.0, 0), 1) }
+    private func fillWidth(_ width: CGFloat) -> CGFloat { width * fillFraction }
 
     private var notChargingProgressBar: some View {
         GeometryReader { geometry in

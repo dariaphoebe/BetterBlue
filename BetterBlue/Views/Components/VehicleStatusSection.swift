@@ -181,12 +181,13 @@ struct VehicleStatusColumn: View {
                 // Clipped to the bar so it doesn't spill past the rounded
                 // edge near 99%; absent entirely at 100%.
                 if let target = data.targetStateOfCharge, target < 100 {
-                    ChargeTargetMarker(centerX: geo.size.width * (Double(target) / 100.0))
-                        .stroke(
-                            Color.white.opacity(0.9),
-                            style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                    ChargeTargetMarker(
+                        centerX: geo.size.width * (Double(target) / 100.0),
+                        radius: 5
+                    )
+                    .fill(Color.white)
+                    .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
 
                 // Time remaining (left): over the green fill when there's
@@ -231,45 +232,39 @@ struct VehicleStatusColumn: View {
     }
 }
 
-/// Charge-limit target marker: a "v" pinching down from the top edge and
-/// a "^" pinching up from the bottom edge, both centered on `centerX`.
-/// The legs are quadratic curves (rather than straight triangles) so they
-/// read as soft chevrons matching the bar's rounded corners. Shared by
-/// the widget status bar and the main sheet's `EVChargingProgressView`;
-/// `halfWidth` / `reach` scale it to each bar's height + corner radius.
+/// Charge-limit target marker: a filled "valley" half-disc hanging from
+/// the top edge and a "mountain" half-disc rising from the bottom edge,
+/// both centered on `centerX`. Each half-disc is a semicircle (two
+/// quarter circles) whose `radius` matches the bar's corner radius, so
+/// the curves read as continuations of the bar. Filled white (with the
+/// same shadow as the bar's text) and clipped to the bar by the caller,
+/// so it never spills past the rounded edge near 99%. Shared by the
+/// widget status bar and the main sheet's `EVChargingProgressView`.
 struct ChargeTargetMarker: Shape {
     /// Target x within the rect (absolute, not a fraction).
     var centerX: CGFloat
-    /// Half the marker's width at the bar edge.
-    var halfWidth: CGFloat = 4.5
-    /// How far each chevron's point reaches in from its edge.
-    var reach: CGFloat = 5
+    /// Half-disc radius — match the bar's corner radius.
+    var radius: CGFloat
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        let cx = centerX
 
-        // Top "v" — base on the top edge, point reaching down into the bar.
-        path.move(to: CGPoint(x: cx - halfWidth, y: rect.minY))
-        path.addQuadCurve(
-            to: CGPoint(x: cx, y: rect.minY + reach),
-            control: CGPoint(x: cx - halfWidth * 0.35, y: rect.minY + reach * 0.7)
+        // Valley: lower half-disc on the top edge (curves down into bar).
+        path.move(to: CGPoint(x: centerX + radius, y: rect.minY))
+        path.addArc(
+            center: CGPoint(x: centerX, y: rect.minY), radius: radius,
+            startAngle: .degrees(0), endAngle: .degrees(180), clockwise: false
         )
-        path.addQuadCurve(
-            to: CGPoint(x: cx + halfWidth, y: rect.minY),
-            control: CGPoint(x: cx + halfWidth * 0.35, y: rect.minY + reach * 0.7)
-        )
+        path.closeSubpath()
 
-        // Bottom "^" — base on the bottom edge, point reaching up.
-        path.move(to: CGPoint(x: cx - halfWidth, y: rect.maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: cx, y: rect.maxY - reach),
-            control: CGPoint(x: cx - halfWidth * 0.35, y: rect.maxY - reach * 0.7)
+        // Mountain: upper half-disc on the bottom edge (curves up).
+        path.move(to: CGPoint(x: centerX - radius, y: rect.maxY))
+        path.addArc(
+            center: CGPoint(x: centerX, y: rect.maxY), radius: radius,
+            startAngle: .degrees(180), endAngle: .degrees(360), clockwise: false
         )
-        path.addQuadCurve(
-            to: CGPoint(x: cx + halfWidth, y: rect.maxY),
-            control: CGPoint(x: cx + halfWidth * 0.35, y: rect.maxY - reach * 0.7)
-        )
+        path.closeSubpath()
+
         return path
     }
 }

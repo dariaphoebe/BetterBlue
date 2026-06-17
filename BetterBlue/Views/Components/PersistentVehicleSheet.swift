@@ -482,19 +482,18 @@ struct PersistentVehicleSheet: View {
             )
         }()
         // Charge speed is hidden on the EV bar — the same value is
-        // already shown on the Charging section's subtitle
-        // ("Charging at 50.0 kW"). Pass nil so EVChargingProgressView
-        // moves the time-remaining text to the left of the bar.
-        let chargeSpeed: String? = nil
+        // Speed goes inside the bar (right-aligned, like the widget); the
+        // target % is shown by the bar's marker, so the time text is just
+        // the duration.
+        let chargeSpeed: String? = {
+            guard ev.charging, ev.chargeSpeed > 0 else { return nil }
+            return String(format: "%.0f kW", ev.chargeSpeed)
+        }()
         let timeRemaining: String? = {
             guard ev.charging, ev.chargeTime > .seconds(0) else { return nil }
-            let formatted = ev.chargeTime.formatted(
+            return ev.chargeTime.formatted(
                 .units(allowed: [.hours, .minutes], width: .abbreviated)
             )
-            if let target = ev.currentTargetSOC {
-                return "\(formatted) to \(Int(target))%"
-            }
-            return formatted
         }()
         // EV indicator color: chargingColor (default green) for both
         // states — user-customizable via Vehicle → Customization →
@@ -605,16 +604,8 @@ struct PersistentVehicleSheet: View {
         // easily misread as "charging is unavailable / disabled."
         let icon = isCharging ? "stop.fill" : "bolt.fill"
         let stateText: String = {
-            if isCharging {
-                // Include charge speed in the status so the row
-                // doesn't read "Charging / Charging" (title +
-                // subtitle); when the rate is unknown, fall back
-                // to just "Charging".
-                if ev.chargeSpeed > 0 {
-                    return String(format: "Charging at %.1f kW", ev.chargeSpeed)
-                }
-                return "Charging"
-            }
+            // Just "Charging" — the speed now shows inside the bar.
+            if isCharging { return "Charging" }
             if isPluggedIn { return "Ready to Charge" }
             return "Unplugged"
         }()
