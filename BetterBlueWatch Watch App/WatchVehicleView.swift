@@ -8,6 +8,7 @@
 import BetterBlueKit
 import SwiftData
 import SwiftUI
+import WidgetKit
 
 struct WatchVehicleView: View {
     let vehicle: BBVehicle
@@ -341,6 +342,11 @@ struct WatchVehicleView: View {
             )
             currentVehicle.updateStatus(with: status)
             lastRefreshDate = Date()
+            // Push the fresh battery/range to the watch-face complication.
+            // Nothing else reloads it from the watch side, so without this
+            // the complication keeps showing a stale value (GitHub: watch
+            // complication battery % not updating).
+            WidgetCenter.shared.reloadAllTimelines()
 
         } catch {
             BBLogger.warning(.app, "WatchVehicle: failed to refresh status: \(error)")
@@ -371,6 +377,7 @@ struct WatchVehicleView: View {
             },
             statusMessageUpdater: statusUpdater,
         )
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func performClimateAction(shouldStart: Bool, statusUpdater: @escaping @Sendable (String) -> Void) async throws {
@@ -391,6 +398,7 @@ struct WatchVehicleView: View {
             },
             statusMessageUpdater: statusUpdater,
         )
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func performChargeAction(shouldStart: Bool, statusUpdater: @escaping @Sendable (String) -> Void) async throws {
@@ -411,6 +419,7 @@ struct WatchVehicleView: View {
             },
             statusMessageUpdater: statusUpdater,
         )
+        WidgetCenter.shared.reloadAllTimelines()
     }
 }
 
