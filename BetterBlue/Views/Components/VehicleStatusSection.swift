@@ -187,24 +187,27 @@ struct VehicleStatusColumn: View {
     private func chargingBar(_ axis: Axis) -> some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                // Capsule track + fill, with a thin vertical line punched
-                // out at the charge limit so the background shows through
-                // it. (Widget shows just the line — no numeric pill.)
+                // Capsule track with a rectangular fill masked to it (flat
+                // trailing edge), and a dotted white line at the charge
+                // limit. (Widget shows just the line — no numeric pill.)
                 ZStack(alignment: .leading) {
                     Capsule().fill(textColor.opacity(0.22))
-                    Capsule()
+                    Rectangle()
                         .fill(axis.color)
                         .frame(width: fillWidth(axis, geo.size.width))
 
                     if let target = data.targetStateOfCharge, target < 100 {
-                        Capsule()
-                            .fill(Color.black)
-                            .blendMode(.destinationOut)
+                        ChargeLimitLine()
+                            .stroke(
+                                Color.white,
+                                style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [0.1, 4])
+                            )
+                            .shadow(color: .black.opacity(0.4), radius: 1)
                             .frame(width: 2)
                             .offset(x: geo.size.width * (Double(target) / 100.0) - 1)
                     }
                 }
-                .compositingGroup()
+                .clipShape(Capsule())
 
                 // Time remaining (left): over the green fill when there's
                 // room for it (>25%), otherwise shifted to the start of
@@ -245,6 +248,18 @@ struct VehicleStatusColumn: View {
 
     private func timeRemainingString(_ minutes: Int) -> String {
         minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+    }
+}
+
+/// A single vertical line centered in its rect. Stroked with a dotted
+/// dash to mark the charge limit on the charging bar. Shared by the
+/// widget status bar and the main sheet's `EVChargingProgressView`.
+struct ChargeLimitLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        return path
     }
 }
 

@@ -91,8 +91,8 @@ struct EVChargingProgressView: View {
 
     private var chargingProgressBar: some View {
         VStack(spacing: 4) {
-            // Capsule track + fill, with a thin vertical line punched out
-            // at the charge limit so the glassy card shows through it.
+            // Capsule track with a rectangular fill masked to it (flat
+            // trailing edge), and a dotted white line at the charge limit.
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     ZStack(alignment: .leading) {
@@ -100,19 +100,22 @@ struct EVChargingProgressView: View {
                             .fill(Color.gray.opacity(0.2))
                             .frame(height: 32)
 
-                        Capsule()
+                        Rectangle()
                             .fill(chargingColor)
                             .frame(width: fillWidth(geometry.size.width), height: 32)
 
                         if let targetSOC, targetSOC < 100 {
-                            Capsule()
-                                .fill(Color.black)
-                                .blendMode(.destinationOut)
+                            ChargeLimitLine()
+                                .stroke(
+                                    Color.white,
+                                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [0.1, 5])
+                                )
+                                .shadow(color: .black.opacity(0.4), radius: 1)
                                 .frame(width: 2.5, height: 32)
                                 .offset(x: geometry.size.width * (targetSOC / 100.0) - 1.25)
                         }
                     }
-                    .compositingGroup()
+                    .clipShape(Capsule())
 
                     // Time remaining (left), charge speed (right) — same
                     // fill-aware placement as the widget so each label sits
