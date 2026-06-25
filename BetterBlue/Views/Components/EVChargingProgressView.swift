@@ -92,7 +92,8 @@ struct EVChargingProgressView: View {
     private var chargingProgressBar: some View {
         VStack(spacing: 4) {
             // Capsule track with a rectangular fill masked to it (flat
-            // trailing edge), and a dotted white line at the charge limit.
+            // trailing edge), and a thin charge-limit line tinted to match
+            // the limit pill below.
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     ZStack(alignment: .leading) {
@@ -106,13 +107,9 @@ struct EVChargingProgressView: View {
 
                         if let targetSOC, targetSOC < 100 {
                             ChargeLimitLine()
-                                .stroke(
-                                    Color.white,
-                                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [0.1, 5])
-                                )
-                                .shadow(color: .black.opacity(0.4), radius: 1)
-                                .frame(width: 2.5, height: 32)
-                                .offset(x: geometry.size.width * (targetSOC / 100.0) - 1.25)
+                                .stroke(Color.secondary, lineWidth: 1.5)
+                                .frame(width: 1.5, height: 32)
+                                .offset(x: geometry.size.width * (targetSOC / 100.0) - 0.75)
                         }
                     }
                     .clipShape(Capsule())
@@ -152,7 +149,7 @@ struct EVChargingProgressView: View {
             // the explicit "<n>%" target. Hidden at 100%.
             if let targetSOC, targetSOC < 100 {
                 GeometryReader { geometry in
-                    Text("\(Int(targetSOC))%")
+                    Text("\(Int(targetSOC))% limit")
                         .font(.caption2)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)

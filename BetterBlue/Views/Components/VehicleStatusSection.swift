@@ -188,8 +188,9 @@ struct VehicleStatusColumn: View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 // Capsule track with a rectangular fill masked to it (flat
-                // trailing edge), and a dotted white line at the charge
-                // limit. (Widget shows just the line — no numeric pill.)
+                // trailing edge), and a thin charge-limit line in the
+                // widget's secondary foreground tint (the pill-color analog
+                // — the widget has no numeric pill).
                 ZStack(alignment: .leading) {
                     Capsule().fill(textColor.opacity(0.22))
                     Rectangle()
@@ -198,13 +199,9 @@ struct VehicleStatusColumn: View {
 
                     if let target = data.targetStateOfCharge, target < 100 {
                         ChargeLimitLine()
-                            .stroke(
-                                Color.white,
-                                style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [0.1, 4])
-                            )
-                            .shadow(color: .black.opacity(0.4), radius: 1)
-                            .frame(width: 2)
-                            .offset(x: geo.size.width * (Double(target) / 100.0) - 1)
+                            .stroke(textColor.opacity(0.7), lineWidth: 1.5)
+                            .frame(width: 1.5)
+                            .offset(x: geo.size.width * (Double(target) / 100.0) - 0.75)
                     }
                 }
                 .clipShape(Capsule())
@@ -251,9 +248,9 @@ struct VehicleStatusColumn: View {
     }
 }
 
-/// A single vertical line centered in its rect. Stroked with a dotted
-/// dash to mark the charge limit on the charging bar. Shared by the
-/// widget status bar and the main sheet's `EVChargingProgressView`.
+/// A single vertical line centered in its rect. Stroked thin to mark the
+/// charge limit on the charging bar. Shared by the widget status bar and
+/// the main sheet's `EVChargingProgressView`.
 struct ChargeLimitLine: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
