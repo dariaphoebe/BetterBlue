@@ -199,9 +199,9 @@ struct VehicleStatusColumn: View {
 
                     if let target = data.targetStateOfCharge, target < 100 {
                         ChargeLimitLine()
-                            .stroke(textColor.opacity(0.7), lineWidth: 1.5)
-                            .frame(width: 1.5)
-                            .offset(x: geo.size.width * (Double(target) / 100.0) - 0.75)
+                            .stroke(textColor.opacity(0.7), lineWidth: 1)
+                            .frame(width: 1)
+                            .offset(x: geo.size.width * (Double(target) / 100.0) - 0.5)
                     }
                 }
                 .clipShape(Capsule())

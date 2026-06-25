@@ -107,9 +107,9 @@ struct EVChargingProgressView: View {
 
                         if let targetSOC, targetSOC < 100 {
                             ChargeLimitLine()
-                                .stroke(Color.secondary, lineWidth: 1.5)
-                                .frame(width: 1.5, height: 32)
-                                .offset(x: clampedPillX(geometry.size.width, target: targetSOC) - 0.75)
+                                .stroke(Color.secondary.opacity(0.5), lineWidth: 1)
+                                .frame(width: 1, height: 32)
+                                .offset(x: clampedPillX(geometry.size.width, target: targetSOC) - 0.5)
                         }
                     }
                     .clipShape(Capsule())
@@ -167,15 +167,17 @@ struct EVChargingProgressView: View {
         .overlay {
             // Continuous connector: extends the in-bar limit line down
             // across the gap to meet the top of the limit pill, tying the
-            // line and pill into one element. Drawn at the same clamped x
-            // as both. Bar is 32 tall + 4 VStack spacing → the pill begins
-            // just below, so an 8pt segment from y=32 reaches its top edge.
+            // line and pill into one element. Same color/opacity/thickness
+            // as the pill's border. Drawn at the same clamped x as both.
+            // Bar is 32 tall + 4 VStack spacing → the pill border begins
+            // just below, so a 6pt segment from y=32 lands on its top edge
+            // without overlapping into it.
             if let targetSOC, targetSOC < 100 {
                 GeometryReader { geo in
                     Rectangle()
-                        .fill(Color.secondary)
-                        .frame(width: 1.5, height: 8)
-                        .position(x: clampedPillX(geo.size.width, target: targetSOC), y: 36)
+                        .fill(Color.secondary.opacity(0.5))
+                        .frame(width: 1, height: 6)
+                        .position(x: clampedPillX(geo.size.width, target: targetSOC), y: 35)
                 }
             }
         }
