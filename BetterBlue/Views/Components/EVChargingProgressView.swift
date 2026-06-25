@@ -90,63 +90,88 @@ struct EVChargingProgressView: View {
     }
 
     private var chargingProgressBar: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                // Track + fill, with the target marker punched out so the
-                // glassy card behind the bar shows through the notches.
+        VStack(spacing: 4) {
+            // Capsule track + fill, with a thin vertical line punched out
+            // at the charge limit so the glassy card shows through it.
+            GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.gray.opacity(0.2))
-                        .frame(height: 32)
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.gray.opacity(0.2))
+                            .frame(height: 32)
 
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(chargingColor)
-                        .frame(width: fillWidth(geometry.size.width), height: 32)
+                        Capsule()
+                            .fill(chargingColor)
+                            .frame(width: fillWidth(geometry.size.width), height: 32)
 
-                    // Target SOC marker — "v"/"^" pinches at the limit,
-                    // punched out via destinationOut. Hidden at 100%.
-                    if let targetSOC, targetSOC < 100 {
-                        ChargeTargetMarker(
-                            centerX: geometry.size.width * (targetSOC / 100.0),
-                            radius: 8
-                        )
-                        .fill(Color.black)
-                        .blendMode(.destinationOut)
-                        .frame(height: 32)
+                        if let targetSOC, targetSOC < 100 {
+                            Capsule()
+                                .fill(Color.black)
+                                .blendMode(.destinationOut)
+                                .frame(width: 2.5, height: 32)
+                                .offset(x: geometry.size.width * (targetSOC / 100.0) - 1.25)
+                        }
+                    }
+                    .compositingGroup()
+
+                    // Time remaining (left), charge speed (right) — same
+                    // fill-aware placement as the widget so each label sits
+                    // over the green fill or the gray remainder rather than
+                    // straddling the boundary.
+                    if let timeRemaining = chargeTimeRemaining {
+                        Text(timeRemaining)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                            .padding(.leading, 12)
+                            .offset(x: fillFraction > 0.25 ? 0 : fillWidth(geometry.size.width))
+                    }
+
+                    if let speed = chargeSpeed {
+                        Text(speed)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                            .padding(.trailing, 12)
+                            .frame(
+                                width: fillFraction < 0.8 ? geometry.size.width : fillWidth(geometry.size.width),
+                                alignment: .trailing
+                            )
                     }
                 }
-                .compositingGroup()
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .frame(height: 32)
 
-                // Time remaining (left), charge speed (right) — same
-                // fill-aware placement as the widget so each label sits
-                // over the green fill or the gray remainder rather than
-                // straddling the boundary.
-                if let timeRemaining = chargeTimeRemaining {
-                    Text(timeRemaining)
-                        .font(.caption)
+            // Numeric charge-limit pill, centered under the line at the
+            // limit. Unlike the widget, the larger surfaces have room for
+            // the explicit "<n>%" target. Hidden at 100%.
+            if let targetSOC, targetSOC < 100 {
+                GeometryReader { geometry in
+                    Text("\(Int(targetSOC))%")
+                        .font(.caption2)
                         .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
-                        .padding(.leading, 12)
-                        .offset(x: fillFraction > 0.25 ? 0 : fillWidth(geometry.size.width))
-                }
-
-                if let speed = chargeSpeed {
-                    Text(speed)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
-                        .padding(.trailing, 12)
-                        .frame(
-                            width: fillFraction < 0.8 ? geometry.size.width : fillWidth(geometry.size.width),
-                            alignment: .trailing
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Capsule().stroke(Color.secondary.opacity(0.5), lineWidth: 1))
+                        .position(
+                            x: clampedPillX(geometry.size.width, target: targetSOC),
+                            y: 11
                         )
                 }
+                .frame(height: 22)
             }
         }
-        .frame(height: 32)
+    }
+
+    /// Keep the limit pill inside the bar's width so it doesn't clip at
+    /// high targets, leaving roughly half a small pill's width of margin.
+    private func clampedPillX(_ width: CGFloat, target: Double) -> CGFloat {
+        let x = width * (target / 100.0)
+        let margin: CGFloat = 22
+        return min(max(x, margin), width - margin)
     }
 
     /// Battery fill as a 0...1 fraction and its pixel width — used to

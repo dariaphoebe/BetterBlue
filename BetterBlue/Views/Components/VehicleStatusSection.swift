@@ -179,37 +179,32 @@ struct VehicleStatusColumn: View {
         .frame(width: lineWidth > 0 ? lineWidth : nil, height: 5)
     }
 
-    /// App-style charging bar: a taller filled track with the time
-    /// remaining and charge speed inside it and a dashed vertical marker
-    /// at the target charge level — mirroring the main sheet's EV bar.
+    /// App-style charging bar: a taller capsule track with the time
+    /// remaining and charge speed inside it and a thin vertical line at
+    /// the target charge level — mirroring the main sheet's EV bar.
     /// Text positions are fill-aware so they sit over the green fill or
     /// the gray remainder rather than straddling the boundary/outline.
     private func chargingBar(_ axis: Axis) -> some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                // Track + fill, with the target marker punched out so the
-                // background (gradient / glass) shows through the notches
-                // rather than drawing an opaque marker on top of the bar.
+                // Capsule track + fill, with a thin vertical line punched
+                // out at the charge limit so the background shows through
+                // it. (Widget shows just the line — no numeric pill.)
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 5).fill(textColor.opacity(0.22))
-                    RoundedRectangle(cornerRadius: 5)
+                    Capsule().fill(textColor.opacity(0.22))
+                    Capsule()
                         .fill(axis.color)
                         .frame(width: fillWidth(axis, geo.size.width))
 
-                    // Target marker: a "v" pinching down from the top edge
-                    // and a "^" pinching up from the bottom at the target
-                    // SOC. Punched out via destinationOut; absent at 100%.
                     if let target = data.targetStateOfCharge, target < 100 {
-                        ChargeTargetMarker(
-                            centerX: geo.size.width * (Double(target) / 100.0),
-                            radius: 5
-                        )
-                        .fill(Color.black)
-                        .blendMode(.destinationOut)
+                        Capsule()
+                            .fill(Color.black)
+                            .blendMode(.destinationOut)
+                            .frame(width: 2)
+                            .offset(x: geo.size.width * (Double(target) / 100.0) - 1)
                     }
                 }
                 .compositingGroup()
-                .clipShape(RoundedRectangle(cornerRadius: 5))
 
                 // Time remaining (left): over the green fill when there's
                 // room for it (>25%), otherwise shifted to the start of
@@ -250,54 +245,6 @@ struct VehicleStatusColumn: View {
 
     private func timeRemainingString(_ minutes: Int) -> String {
         minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
-    }
-}
-
-/// Charge-limit target marker: a filled "valley" pointing down from the
-/// top edge and a "mountain" pointing up from the bottom edge, both
-/// centered on `centerX`. Each is a pointed shape whose two sides are
-/// curves (radius `radius`, matching the bar's corner radius) that bow
-/// inward and meet at a cusp — pointy, not a smooth dome. Filled white
-/// (with the bar text's shadow) and clipped to the bar by the caller, so
-/// it never spills past the rounded edge near 99%. Shared by the widget
-/// status bar and the main sheet's `EVChargingProgressView`.
-struct ChargeTargetMarker: Shape {
-    /// Target x within the rect (absolute, not a fraction).
-    var centerX: CGFloat
-    /// Marker half-width and depth — match the bar's corner radius. The
-    /// control points sit on the edge so each side reaches the cusp with
-    /// a vertical tangent (a clean point).
-    var radius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let cx = centerX
-
-        // Valley: point reaching down from the top edge.
-        path.move(to: CGPoint(x: cx - radius, y: rect.minY))
-        path.addQuadCurve(
-            to: CGPoint(x: cx, y: rect.minY + radius),
-            control: CGPoint(x: cx, y: rect.minY)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: cx + radius, y: rect.minY),
-            control: CGPoint(x: cx, y: rect.minY)
-        )
-        path.closeSubpath()
-
-        // Mountain: point reaching up from the bottom edge.
-        path.move(to: CGPoint(x: cx - radius, y: rect.maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: cx, y: rect.maxY - radius),
-            control: CGPoint(x: cx, y: rect.maxY)
-        )
-        path.addQuadCurve(
-            to: CGPoint(x: cx + radius, y: rect.maxY),
-            control: CGPoint(x: cx, y: rect.maxY)
-        )
-        path.closeSubpath()
-
-        return path
     }
 }
 
