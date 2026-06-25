@@ -92,30 +92,31 @@ struct EVChargingProgressView: View {
     private var chargingProgressBar: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                // Background
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.gray.opacity(0.2))
-                    .frame(height: 32)
+                // Track + fill, with the target marker punched out so the
+                // glassy card behind the bar shows through the notches.
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(height: 32)
 
-                // Foreground progress
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(chargingColor)
-                    .frame(width: fillWidth(geometry.size.width), height: 32)
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(chargingColor)
+                        .frame(width: fillWidth(geometry.size.width), height: 32)
 
-                // Target SOC indicator — filled "valley"/"mountain"
-                // half-discs pointing at the limit, clipped to the bar so
-                // it doesn't spill past the rounded edge near 99%. Hidden
-                // at 100%.
-                if let targetSOC, targetSOC < 100 {
-                    ChargeTargetMarker(
-                        centerX: geometry.size.width * (targetSOC / 100.0),
-                        radius: 8
-                    )
-                    .fill(Color.white)
-                    .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
-                    .frame(height: 32)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    // Target SOC marker — "v"/"^" pinches at the limit,
+                    // punched out via destinationOut. Hidden at 100%.
+                    if let targetSOC, targetSOC < 100 {
+                        ChargeTargetMarker(
+                            centerX: geometry.size.width * (targetSOC / 100.0),
+                            radius: 8
+                        )
+                        .fill(Color.black)
+                        .blendMode(.destinationOut)
+                        .frame(height: 32)
+                    }
                 }
+                .compositingGroup()
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 // Time remaining (left), charge speed (right) — same
                 // fill-aware placement as the widget so each label sits

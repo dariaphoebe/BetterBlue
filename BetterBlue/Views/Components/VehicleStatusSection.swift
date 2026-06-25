@@ -187,24 +187,29 @@ struct VehicleStatusColumn: View {
     private func chargingBar(_ axis: Axis) -> some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 5).fill(textColor.opacity(0.22))
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(axis.color)
-                    .frame(width: fillWidth(axis, geo.size.width))
+                // Track + fill, with the target marker punched out so the
+                // background (gradient / glass) shows through the notches
+                // rather than drawing an opaque marker on top of the bar.
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 5).fill(textColor.opacity(0.22))
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(axis.color)
+                        .frame(width: fillWidth(axis, geo.size.width))
 
-                // Target marker: a "v" pinching down from the top edge and
-                // a "^" pinching up from the bottom edge at the target SOC.
-                // Clipped to the bar so it doesn't spill past the rounded
-                // edge near 99%; absent entirely at 100%.
-                if let target = data.targetStateOfCharge, target < 100 {
-                    ChargeTargetMarker(
-                        centerX: geo.size.width * (Double(target) / 100.0),
-                        radius: 5
-                    )
-                    .fill(Color.white)
-                    .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    // Target marker: a "v" pinching down from the top edge
+                    // and a "^" pinching up from the bottom at the target
+                    // SOC. Punched out via destinationOut; absent at 100%.
+                    if let target = data.targetStateOfCharge, target < 100 {
+                        ChargeTargetMarker(
+                            centerX: geo.size.width * (Double(target) / 100.0),
+                            radius: 5
+                        )
+                        .fill(Color.black)
+                        .blendMode(.destinationOut)
+                    }
                 }
+                .compositingGroup()
+                .clipShape(RoundedRectangle(cornerRadius: 5))
 
                 // Time remaining (left): over the green fill when there's
                 // room for it (>25%), otherwise shifted to the start of
