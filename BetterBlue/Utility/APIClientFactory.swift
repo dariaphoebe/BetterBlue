@@ -24,6 +24,7 @@ struct APIClientFactoryConfiguration {
         logSink: HTTPLogSink? = nil,
         rememberMeToken: String? = nil,
         deviceId: String? = nil,
+        hyundaiCanadaVariant: HyundaiCanadaVariant = .default,
         onRememberMeTokenRotated: (@MainActor @Sendable (String) -> Void)? = nil
     ) {
         apiConfiguration = APIClientConfiguration(
@@ -37,6 +38,7 @@ struct APIClientFactoryConfiguration {
             logSink: logSink,
             rememberMeToken: rememberMeToken,
             deviceId: deviceId,
+            hyundaiCanadaVariant: hyundaiCanadaVariant,
             onRememberMeTokenRotated: onRememberMeTokenRotated
         )
         self.modelContext = modelContext
@@ -83,6 +85,7 @@ func createAPIClient(configuration: APIClientFactoryConfiguration) -> any APICli
         rememberMeToken: configuration.apiConfiguration.rememberMeToken,
         redactPII: configuration.apiConfiguration.redactPII,
         deviceId: configuration.apiConfiguration.deviceId,
+        hyundaiCanadaVariant: configuration.apiConfiguration.hyundaiCanadaVariant,
         onRememberMeTokenRotated: configuration.apiConfiguration.onRememberMeTokenRotated
     )
 

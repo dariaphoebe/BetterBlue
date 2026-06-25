@@ -25,6 +25,7 @@ struct AccountInfoView: View {
     @State private var showingPasswordDialog = false
     @State private var showingPinDialog = false
     @State private var showingRefreshTDialog = false
+    @State private var isResetting = false
     @State private var fakeVehicles: [BBVehicle] = []
     /// Hyundai Europe only. Mirrors the same flag in `AddAccountView`
     /// — when true the credentials section surfaces "Change Refresh
@@ -145,6 +146,42 @@ struct AccountInfoView: View {
                         .font(.caption)
                         .textCase(nil)
                     }
+                }
+            }
+
+            // Hyundai Canada connection variant + session reset. Canada's
+            // backend behaves differently per user, so the picker lets a
+            // user try the identity that connects for them; Reset Session
+            // recovers from a stale token without re-adding the account.
+            Section {
+                if account.isHyundaiCanada {
+                    Picker("Connection", selection: variantBinding) {
+                        ForEach(HyundaiCanadaVariant.allCases, id: \.self) { variant in
+                            Text(variant.displayName).tag(variant)
+                        }
+                    }
+                    .disabled(isResetting)
+                }
+
+                Button {
+                    Task { await resetSession() }
+                } label: {
+                    HStack {
+                        Text("Reset Session")
+                        if isResetting {
+                            Spacer()
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(isResetting)
+            } header: {
+                Text(account.isHyundaiCanada ? "Connection" : "Session")
+            } footer: {
+                if account.isHyundaiCanada {
+                    Text("\(account.hyundaiCanadaVariant.summary)\n\nReset Session forces a fresh login.")
+                } else {
+                    Text("Forces a fresh login — use if the app is stuck with a stale session.")
                 }
             }
 
@@ -277,6 +314,44 @@ struct AccountInfoView: View {
             useToken = supportsRefreshTokenAuth
                 && account.password.isEmpty
                 && !account.refreshToken.isEmpty
+        }
+    }
+
+    /// Hyundai Canada connection variant — changing it persists the
+    /// choice and re-logs in so the new identity takes effect.
+    private var variantBinding: Binding<HyundaiCanadaVariant> {
+        Binding(
+            get: { account.hyundaiCanadaVariant },
+            set: { newValue in
+                guard newValue != account.hyundaiCanadaVariant else { return }
+                account.hyundaiCanadaVariant = newValue
+                try? modelContext.save()
+                Task { await resetSession() }
+            }
+        )
+    }
+
+    /// Clears the session and re-logs in (with the current variant), then
+    /// refreshes status so the change is visible. Surfaces errors / MFA
+    /// in the existing success/error rows.
+    @MainActor
+    private func resetSession() async {
+        isResetting = true
+        saveError = nil
+        successMessage = nil
+        defer { isResetting = false }
+        do {
+            try await account.resetSession(modelContext: modelContext)
+            for vehicle in account.safeVehicles {
+                try? await account.fetchAndUpdateVehicleStatus(
+                    for: vehicle, modelContext: modelContext, cached: false
+                )
+            }
+            successMessage = "Reconnected."
+        } catch let error as APIError where error.errorType == .requiresMFA {
+            successMessage = "Re-authentication required — open the vehicle to verify."
+        } catch {
+            saveError = ActionError(action: "Reset session", error: error, accountId: account.id)
         }
     }
 
