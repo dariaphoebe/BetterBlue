@@ -109,7 +109,7 @@ struct EVChargingProgressView: View {
                             ChargeLimitLine()
                                 .stroke(Color.secondary, lineWidth: 1.5)
                                 .frame(width: 1.5, height: 32)
-                                .offset(x: geometry.size.width * (targetSOC / 100.0) - 0.75)
+                                .offset(x: clampedPillX(geometry.size.width, target: targetSOC) - 0.75)
                         }
                     }
                     .clipShape(Capsule())
@@ -164,13 +164,28 @@ struct EVChargingProgressView: View {
                 .frame(height: 22)
             }
         }
+        .overlay {
+            // Continuous connector: extends the in-bar limit line down
+            // across the gap to meet the top of the limit pill, tying the
+            // line and pill into one element. Drawn at the same clamped x
+            // as both. Bar is 32 tall + 4 VStack spacing → the pill begins
+            // just below, so an 8pt segment from y=32 reaches its top edge.
+            if let targetSOC, targetSOC < 100 {
+                GeometryReader { geo in
+                    Rectangle()
+                        .fill(Color.secondary)
+                        .frame(width: 1.5, height: 8)
+                        .position(x: clampedPillX(geo.size.width, target: targetSOC), y: 36)
+                }
+            }
+        }
     }
 
     /// Keep the limit pill inside the bar's width so it doesn't clip at
-    /// high targets, leaving roughly half a small pill's width of margin.
+    /// high targets, leaving roughly half the pill's width of margin.
     private func clampedPillX(_ width: CGFloat, target: Double) -> CGFloat {
         let x = width * (target / 100.0)
-        let margin: CGFloat = 22
+        let margin: CGFloat = 30
         return min(max(x, margin), width - margin)
     }
 
