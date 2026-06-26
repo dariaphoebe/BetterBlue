@@ -210,7 +210,7 @@ struct VehicleStatusColumn: View {
 
                     if let limitX {
                         ChargeLimitLine()
-                            .stroke(textColor.opacity(0.7), lineWidth: 1)
+                            .stroke(textColor.opacity(0.2), lineWidth: 1)
                             .frame(width: 1)
                             .offset(x: limitX - 0.5)
                     }

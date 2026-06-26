@@ -117,7 +117,7 @@ struct EVChargingProgressView: View {
 
                     if let limitX {
                         ChargeLimitLine()
-                            .stroke(Color.secondary.opacity(0.5), lineWidth: 1)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                             .frame(width: 1, height: 32)
                             .offset(x: limitX - 0.5)
                     }
