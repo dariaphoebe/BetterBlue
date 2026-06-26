@@ -186,52 +186,55 @@ struct VehicleStatusColumn: View {
     /// the gray remainder rather than straddling the boundary/outline.
     private func chargingBar(_ axis: Axis) -> some View {
         GeometryReader { geo in
+            let width = geo.size.width
+            let limitX: CGFloat? = data.targetStateOfCharge
+                .flatMap { $0 < 100 ? width * (Double($0) / 100.0) : nil }
+
             ZStack(alignment: .leading) {
-                // Capsule track with a rectangular fill masked to it (flat
-                // trailing edge), and a thin charge-limit line in the
-                // widget's secondary foreground tint (the pill-color analog
-                // — the widget has no numeric pill).
+                // Track, a hatch over the won't-fill region beyond the
+                // limit, the masked rectangular fill, then the limit line.
                 ZStack(alignment: .leading) {
                     Capsule().fill(textColor.opacity(0.22))
+
+                    if let limitX {
+                        DiagonalHatch(spacing: 5)
+                            .stroke(textColor.opacity(0.2), lineWidth: 1)
+                            .frame(width: max(0, width - limitX), height: geo.size.height)
+                            .clipped()
+                            .offset(x: limitX)
+                    }
+
                     Rectangle()
                         .fill(axis.color)
-                        .frame(width: fillWidth(axis, geo.size.width))
+                        .frame(width: fillWidth(axis, width))
 
-                    if let target = data.targetStateOfCharge, target < 100 {
+                    if let limitX {
                         ChargeLimitLine()
                             .stroke(textColor.opacity(0.7), lineWidth: 1)
                             .frame(width: 1)
-                            .offset(x: geo.size.width * (Double(target) / 100.0) - 0.5)
+                            .offset(x: limitX - 0.5)
                     }
                 }
                 .clipShape(Capsule())
 
-                // Time remaining (left): over the green fill when there's
-                // room for it (>25%), otherwise shifted to the start of
-                // the gray remainder so it's not cramped on a thin fill.
-                if let minutes = data.chargeTimeRemainingMinutes, minutes > 0 {
-                    Text(timeRemainingString(minutes))
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(.white)
-                        .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
-                        .padding(.leading, 5)
-                        .offset(x: axis.fraction > 0.25 ? 0 : fillWidth(axis, geo.size.width))
-                }
-
-                // Charge speed (right): right-aligned over the gray when
-                // the fill is small (<80%); once the fill is large the gray
-                // is too thin, so right-align to the green fill edge so it
-                // stays clear of the rounded outline.
+                // Charge speed — left-aligned over the fill.
                 if let kw = data.chargeSpeedKilowatts, kw > 0 {
                     Text("\(Int(kw.rounded()))kw")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(.white)
                         .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
-                        .padding(.trailing, 6)
-                        .frame(
-                            width: axis.fraction < 0.8 ? geo.size.width : fillWidth(axis, geo.size.width),
-                            alignment: .trailing
-                        )
+                        .padding(.leading, 5)
+                }
+
+                // Time remaining — right-aligned to the limit line, or the
+                // bar's right edge when there's no limit.
+                if let minutes = data.chargeTimeRemainingMinutes, minutes > 0 {
+                    Text(timeRemainingString(minutes))
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 1, x: 0, y: 1)
+                        .padding(.trailing, 5)
+                        .frame(width: limitX ?? width, alignment: .trailing)
                 }
             }
         }
@@ -256,6 +259,27 @@ struct ChargeLimitLine: Shape {
         var path = Path()
         path.move(to: CGPoint(x: rect.midX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        return path
+    }
+}
+
+/// Evenly spaced 45° diagonal lines filling the rect — a subtle hatch for
+/// the portion of the charging bar beyond the limit that won't fill in.
+/// Caller clips it to that region. Shared by the widget status bar and the
+/// main sheet's `EVChargingProgressView`.
+struct DiagonalHatch: Shape {
+    var spacing: CGFloat = 5
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        // Lines run bottom-left → top-right; start a height's worth to the
+        // left so the slanted lines still cover the rect's left edge.
+        var x = rect.minX - rect.height
+        while x < rect.maxX {
+            path.move(to: CGPoint(x: x, y: rect.maxY))
+            path.addLine(to: CGPoint(x: x + rect.height, y: rect.minY))
+            x += spacing
+        }
         return path
     }
 }

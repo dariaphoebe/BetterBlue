@@ -90,105 +90,64 @@ struct EVChargingProgressView: View {
     }
 
     private var chargingProgressBar: some View {
-        VStack(spacing: 4) {
-            // Capsule track with a rectangular fill masked to it (flat
-            // trailing edge), and a thin charge-limit line tinted to match
-            // the limit pill below.
-            GeometryReader { geometry in
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            // x of the charge-limit line, when a sub-100% limit is set.
+            let limitX: CGFloat? = targetSOC.flatMap { $0 < 100 ? width * ($0 / 100.0) : nil }
+
+            ZStack(alignment: .leading) {
+                // Track, a hatch over the won't-fill region beyond the
+                // limit, the masked rectangular fill, then the limit line.
                 ZStack(alignment: .leading) {
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.gray.opacity(0.2))
-                            .frame(height: 32)
+                    Capsule()
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(height: 32)
 
-                        Rectangle()
-                            .fill(chargingColor)
-                            .frame(width: fillWidth(geometry.size.width), height: 32)
-
-                        if let targetSOC, targetSOC < 100 {
-                            ChargeLimitLine()
-                                .stroke(Color.secondary.opacity(0.5), lineWidth: 1)
-                                .frame(width: 1, height: 32)
-                                .offset(x: clampedPillX(geometry.size.width, target: targetSOC) - 0.5)
-                        }
-                    }
-                    .clipShape(Capsule())
-
-                    // Time remaining (left), charge speed (right) — same
-                    // fill-aware placement as the widget so each label sits
-                    // over the green fill or the gray remainder rather than
-                    // straddling the boundary.
-                    if let timeRemaining = chargeTimeRemaining {
-                        Text(timeRemaining)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
-                            .padding(.leading, 12)
-                            .offset(x: fillFraction > 0.25 ? 0 : fillWidth(geometry.size.width))
+                    if let limitX {
+                        DiagonalHatch(spacing: 6)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            .frame(width: max(0, width - limitX), height: 32)
+                            .clipped()
+                            .offset(x: limitX)
                     }
 
-                    if let speed = chargeSpeed {
-                        Text(speed)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
-                            .padding(.trailing, 12)
-                            .frame(
-                                width: fillFraction < 0.8 ? geometry.size.width : fillWidth(geometry.size.width),
-                                alignment: .trailing
-                            )
-                    }
-                }
-            }
-            .frame(height: 32)
-
-            // Numeric charge-limit pill, centered under the line at the
-            // limit. Unlike the widget, the larger surfaces have room for
-            // the explicit "<n>%" target. Hidden at 100%.
-            if let targetSOC, targetSOC < 100 {
-                GeometryReader { geometry in
-                    Text("\(Int(targetSOC))% limit")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(Capsule().stroke(Color.secondary.opacity(0.5), lineWidth: 1))
-                        .position(
-                            x: clampedPillX(geometry.size.width, target: targetSOC),
-                            y: 11
-                        )
-                }
-                .frame(height: 22)
-            }
-        }
-        .overlay {
-            // Continuous connector: extends the in-bar limit line down
-            // across the gap to meet the top of the limit pill, tying the
-            // line and pill into one element. Same color/opacity/thickness
-            // as the pill's border. Drawn at the same clamped x as both.
-            // Bar is 32 tall + 4 VStack spacing → the pill border begins
-            // just below, so a 6pt segment from y=32 lands on its top edge
-            // without overlapping into it.
-            if let targetSOC, targetSOC < 100 {
-                GeometryReader { geo in
                     Rectangle()
-                        .fill(Color.secondary.opacity(0.5))
-                        .frame(width: 1, height: 6)
-                        .position(x: clampedPillX(geo.size.width, target: targetSOC), y: 35)
+                        .fill(chargingColor)
+                        .frame(width: fillWidth(width), height: 32)
+
+                    if let limitX {
+                        ChargeLimitLine()
+                            .stroke(Color.secondary.opacity(0.5), lineWidth: 1)
+                            .frame(width: 1, height: 32)
+                            .offset(x: limitX - 0.5)
+                    }
+                }
+                .clipShape(Capsule())
+
+                // Charge speed — left-aligned over the fill.
+                if let speed = chargeSpeed {
+                    Text(speed)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                        .padding(.leading, 12)
+                }
+
+                // Time remaining — right-aligned to the limit line, or the
+                // bar's right edge when there's no limit.
+                if let timeRemaining = chargeTimeRemaining {
+                    Text(timeRemaining)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                        .padding(.trailing, 8)
+                        .frame(width: limitX ?? width, alignment: .trailing)
                 }
             }
         }
-    }
-
-    /// Keep the limit pill inside the bar's width so it doesn't clip at
-    /// high targets, leaving roughly half the pill's width of margin.
-    private func clampedPillX(_ width: CGFloat, target: Double) -> CGFloat {
-        let x = width * (target / 100.0)
-        let margin: CGFloat = 30
-        return min(max(x, margin), width - margin)
+        .frame(height: 32)
     }
 
     /// Battery fill as a 0...1 fraction and its pixel width — used to
