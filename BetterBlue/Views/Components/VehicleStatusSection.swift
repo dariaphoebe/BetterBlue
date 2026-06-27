@@ -194,7 +194,7 @@ struct VehicleStatusColumn: View {
                 // Track, a hatch over the won't-fill region beyond the
                 // limit, the masked rectangular fill, then the limit line.
                 ZStack(alignment: .leading) {
-                    Capsule().fill(textColor.opacity(0.22))
+                    RoundedRectangle(cornerRadius: 5).fill(textColor.opacity(0.22))
 
                     if let limitX {
                         DiagonalHatch(spacing: 5)
@@ -215,7 +215,7 @@ struct VehicleStatusColumn: View {
                             .offset(x: limitX - 0.5)
                     }
                 }
-                .clipShape(Capsule())
+                .clipShape(RoundedRectangle(cornerRadius: 5))
 
                 // Charge speed — left-aligned over the fill.
                 if let kw = data.chargeSpeedKilowatts, kw > 0 {

@@ -99,7 +99,7 @@ struct EVChargingProgressView: View {
                 // Track, a hatch over the won't-fill region beyond the
                 // limit, the masked rectangular fill, then the limit line.
                 ZStack(alignment: .leading) {
-                    Capsule()
+                    RoundedRectangle(cornerRadius: 8)
                         .fill(Color.gray.opacity(0.2))
                         .frame(height: 32)
 
@@ -122,7 +122,7 @@ struct EVChargingProgressView: View {
                             .offset(x: limitX - 0.5)
                     }
                 }
-                .clipShape(Capsule())
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
                 // Charge speed — left-aligned over the fill.
                 if let speed = chargeSpeed {
