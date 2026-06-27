@@ -13,16 +13,32 @@ struct TemperatureArcControl: View {
     let preferredUnit: Temperature.Units
     @State private var isDragging = false
 
+    /// The control operates in the user's preferred unit so the step grid
+    /// matches what they read — half a degree in Celsius, a whole degree
+    /// in Fahrenheit.
     private var temperatureRange: ClosedRange<Double> {
-        temperature.units.hvacRange
+        preferredUnit.hvacRange
+    }
+
+    private var step: Double {
+        preferredUnit == .celsius ? 0.5 : 1.0
+    }
+
+    /// Stored temperature expressed in the preferred unit, snapped to the
+    /// step grid and clamped to range — used for both the knob position
+    /// and the readout so they stay in sync with what a drag will store.
+    private var workingValue: Double {
+        let converted = temperature.units.convert(temperature.value, to: preferredUnit)
+        let snapped = (converted / step).rounded() * step
+        return min(max(snapped, temperatureRange.lowerBound), temperatureRange.upperBound)
     }
 
     private var displayValue: String {
-        temperature.units.format(temperature.value, to: preferredUnit)
+        preferredUnit.format(workingValue, to: preferredUnit)
     }
 
     private var normalizedValue: Double {
-        (temperature.value - temperatureRange.lowerBound) / (temperatureRange.upperBound - temperatureRange.lowerBound)
+        (workingValue - temperatureRange.lowerBound) / (temperatureRange.upperBound - temperatureRange.lowerBound)
     }
 
     private var arcStartAngle: Angle {
@@ -161,10 +177,12 @@ struct TemperatureArcControl: View {
                                 let difference = temperatureRange.upperBound - temperatureRange.lowerBound
 
                                 let newTemp = temperatureRange.lowerBound + progress * difference
-                                let roundedTemp = round(newTemp)
+                                let snapped = (newTemp / step).rounded() * step
 
-                                if roundedTemp != temperature.value {
-                                    temperature.value = roundedTemp
+                                // Store back in the preferred unit so the value
+                                // stays on the unit's grid (0.5°C / 1°F).
+                                if snapped != workingValue || temperature.units != preferredUnit {
+                                    temperature = Temperature(value: snapped, units: preferredUnit)
                                 }
                             }
                             .onEnded { _ in
