@@ -1716,8 +1716,18 @@ struct VehicleSheetPager: View {
             // .bottom). Map taps in the dead area above a short card
             // are eaten by the ScrollView — acceptable trade-off
             // versus the post-swipe height jump it replaces.
-            let maxCard = maxCardHeight(geo: geo)
-            let scrollViewHeight = maxCard + chromeOuterInset + maxErrorOverhead
+            // Size the shared scroll view to the tallest SINGLE card —
+            // its own height plus its own error banner — rather than the
+            // max card height plus the max error overhead taken
+            // independently across vehicles. Maxing the two components
+            // separately over-reserves height whenever the tallest card
+            // and the card showing an error banner are *different*
+            // vehicles; that surplus then sits as empty space under every
+            // (top-aligned, bottom-pinned) card, floating the whole sheet
+            // up off the bottom of the screen.
+            let scrollViewHeight = (bbVehicles
+                .map { cardHeight(for: $0.vin, geo: geo) + (errorOverheads[$0.vin] ?? 0) }
+                .max() ?? 0) + chromeOuterInset
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
                 pagerScrollView(geo: geo)
@@ -1762,18 +1772,6 @@ struct VehicleSheetPager: View {
 
     private var maxNaturalHeight: CGFloat {
         naturalHeights.values.max() ?? 0
-    }
-
-    private var maxErrorOverhead: CGFloat {
-        errorOverheads.values.max() ?? 0
-    }
-
-    /// Maximum card height across all vehicles for the current geo
-    /// + detent + drag state. Drives the ScrollView frame so the
-    /// tallest card fits.
-    private func maxCardHeight(geo: GeometryProxy) -> CGFloat {
-        let perCard = bbVehicles.map { cardHeight(for: $0.vin, geo: geo) }
-        return perCard.max() ?? 0
     }
 
     /// Per-vehicle card height — driven by THAT vehicle's own
